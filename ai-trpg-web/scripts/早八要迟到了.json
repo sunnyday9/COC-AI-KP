@@ -1,0 +1,186 @@
+{
+  "meta": {
+    "title": "早八要迟到了",
+    "author": "未知",
+    "ruleSystem": "coc",
+    "version": "1.0"
+  },
+  "scenes": [
+    {
+      "id": "scene_001",
+      "name": "早八要迟到了",
+      "description": "在《早八要迟到了》中，调查员是一群每天早上8点30分都要上课的大学生。在秋冬之交寒冷的10月的某日，来到教学楼附近的调查员发现几栋教学楼门口居然都排起了长队，而此时距离上课只剩下几分钟了。",
+      "npcIds": [],
+      "clueIds": [],
+      "transitionCondition": "调查员进入教学楼"
+    },
+    {
+      "id": "scene_002",
+      "name": "教学楼",
+      "description": "就像早晨调查员遇到的一样，即将上第二节课的现在，教学楼外排着几条长队，学生们无所事事地等待着进入教学楼。",
+      "npcIds": [],
+      "clueIds": [],
+      "transitionCondition": "调查员离开教学楼"
+    },
+    {
+      "id": "scene_003",
+      "name": "校医院",
+      "description": "校医院是一栋两层高的略显老旧的建筑物，整个校医院有两扇门，除了正门之外还有一扇常年关闭的消防门。",
+      "npcIds": [],
+      "clueIds": [],
+      "transitionCondition": "调查员离开校医院"
+    },
+    {
+      "id": "scene_004",
+      "name": "图书馆",
+      "description": "调查员在这里可以搜集关于仪器的信息、搜索古城科技大学的信息或者与其他学生交谈。",
+      "npcIds": [],
+      "clueIds": [],
+      "transitionCondition": "调查员离开图书馆"
+    },
+    {
+      "id": "scene_005",
+      "name": "服务大厅",
+      "description": "服务大厅中除了服务台坐着的1位工作人员之外就只有两三名来办事的学生。因为大多数事情都可以通过这里的自助查询终端完成，前台正在无所事事地看着报纸。",
+      "npcIds": [],
+      "clueIds": [],
+      "transitionCondition": "调查员离开服务大厅"
+    },
+    {
+      "id": "scene_006",
+      "name": "实验楼",
+      "description": "实验楼是一栋5层高的建筑物。由于学校要求所有学生学习物理实验，这个地方是所有学生都很熟悉的地方。很多物理教授都在这栋楼里有自己的办公室或实验室。",
+      "npcIds": [],
+      "clueIds": [],
+      "transitionCondition": "调查员离开实验楼"
+    },
+    {
+      "id": "scene_007",
+      "name": "行政楼",
+      "description": "调查员进入行政楼之后，可以听到有人在楼道打电话的声音。",
+      "npcIds": [],
+      "clueIds": [],
+      "transitionCondition": "调查员离开行政楼"
+    },
+    {
+      "id": "scene_008",
+      "name": "丁香公寓",
+      "description": "调查员进入这栋宿舍楼之后就可以听到在整栋楼里回响的装修施工的声音。",
+      "npcIds": [],
+      "clueIds": [],
+      "transitionCondition": "调查员离开丁香公寓"
+    },
+    {
+      "id": "scene_009",
+      "name": "国际医学中心医院",
+      "description": "调查员拿着伪造的请假条可以畅行无阻地进出校门。此外的情况，调查员只能由北门进出学校，且需要通过潜行检定（趁门卫不注意偷偷溜出校门）敏捷检定或攀爬检定（从围墙翻出校园）。",
+      "npcIds": [],
+      "clueIds": [],
+      "transitionCondition": "调查员离开医院"
+    },
+    {
+      "id": "scene_010",
+      "name": "逐日工程",
+      "description": "“逐日工程”的主体建筑为一座高度约90米、由金属管搭建的圆台状结构。周围是一片未经开发的草地，调查员可以轻松地看出这里正是流传在学生之间的怪异照片的拍摄地点。",
+      "npcIds": [],
+      "clueIds": [],
+      "transitionCondition": "调查员离开逐日工程"
+    }
+  ],
+  "npcs": [
+    {
+      "id": "npc_001",
+      "name": "李建业",
+      "description": "毕业于澳大利亚墨尔本大学核物理专业，硕士研究生导师。教授“光电物理基础”、“核物理基础”和“激光物理”三门课程，并且带领着一个本科生物理实验研究小组和一个研究生课题组。",
+      "dialogueStyle": "专业、严谨"
+    },
+    {
+      "id": "npc_002",
+      "name": "邹强",
+      "description": "应用物理学专业学生，李建业教授的学生，因接触星之彩而生病。",
+      "dialogueStyle": "虚弱、焦虑"
+    },
+    {
+      "id": "npc_003",
+      "name": "韩军",
+      "description": "应用物理学专业学生，李建业教授的学生，因接触星之彩而生病。",
+      "dialogueStyle": "虚弱、焦虑"
+    },
+    {
+      "id": "npc_004",
+      "name": "鲁全福",
+      "description": "古城市疾病控制中心研究员，参与调查传染病事件。",
+      "dialogueStyle": "专业、谨慎"
+    },
+    {
+      "id": "npc_005",
+      "name": "校医",
+      "description": "校医院医生，参与调查传染病事件。",
+      "dialogueStyle": "专业、谨慎"
+    }
+  ],
+  "clues": [
+    {
+      "id": "clue_001",
+      "description": "关于便携式能谱仪的信息",
+      "obtainCondition": "通过图书馆使用检定或询问学生"
+    },
+    {
+      "id": "clue_002",
+      "description": "关于李建业教授的信息",
+      "obtainCondition": "通过服务大厅自助查询终端或询问学生"
+    },
+    {
+      "id": "clue_003",
+      "description": "关于邹强和韩军的信息",
+      "obtainCondition": "通过询问学生或在图书馆查找资料"
+    },
+    {
+      "id": "clue_004",
+      "description": "关于星之彩的信息",
+      "obtainCondition": "通过调查逐日工程或询问教授"
+    },
+    {
+      "id": "clue_005",
+      "description": "关于传染病的信息",
+      "obtainCondition": "通过询问医生或在医院查找资料"
+    }
+  ],
+  "checks": [
+    {
+      "id": "check_001",
+      "skill": "侦查",
+      "difficulty": "普通",
+      "successSceneId": "scene_002",
+      "failSceneId": "scene_002"
+    },
+    {
+      "id": "check_002",
+      "skill": "科学：物理学",
+      "difficulty": "困难",
+      "successSceneId": "scene_003",
+      "failSceneId": "scene_003"
+    },
+    {
+      "id": "check_003",
+      "skill": "图书馆使用",
+      "difficulty": "普通",
+      "successSceneId": "scene_004",
+      "failSceneId": "scene_004"
+    },
+    {
+      "id": "check_004",
+      "skill": "开锁",
+      "difficulty": "普通",
+      "successSceneId": "scene_005",
+      "failSceneId": "scene_005"
+    },
+    {
+      "id": "check_005",
+      "skill": "潜行",
+      "difficulty": "普通",
+      "successSceneId": "scene_006",
+      "failSceneId": "scene_006"
+    }
+  ]
+}
