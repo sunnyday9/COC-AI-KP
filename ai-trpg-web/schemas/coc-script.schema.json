@@ -1,0 +1,73 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "COC Script",
+  "description": "克苏鲁的呼唤 TRPG 剧本结构",
+  "type": "object",
+  "required": ["meta", "scenes"],
+  "properties": {
+    "meta": {
+      "type": "object",
+      "required": ["title", "ruleSystem"],
+      "properties": {
+        "title": { "type": "string" },
+        "author": { "type": "string" },
+        "ruleSystem": { "const": "coc" },
+        "version": { "type": "string" }
+      }
+    },
+    "scenes": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["id", "name"],
+        "properties": {
+          "id": { "type": "string" },
+          "name": { "type": "string" },
+          "description": { "type": "string" },
+          "npcIds": { "type": "array", "items": { "type": "string" } },
+          "clueIds": { "type": "array", "items": { "type": "string" } },
+          "transitionCondition": { "type": "string" }
+        }
+      }
+    },
+    "npcs": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["id", "name"],
+        "properties": {
+          "id": { "type": "string" },
+          "name": { "type": "string" },
+          "description": { "type": "string" },
+          "dialogueStyle": { "type": "string" }
+        }
+      }
+    },
+    "clues": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["id"],
+        "properties": {
+          "id": { "type": "string" },
+          "description": { "type": "string" },
+          "obtainCondition": { "type": "string" }
+        }
+      }
+    },
+    "checks": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["id", "skill"],
+        "properties": {
+          "id": { "type": "string" },
+          "skill": { "type": "string" },
+          "difficulty": { "type": "string", "enum": ["简单", "普通", "困难", "极难"] },
+          "successSceneId": { "type": "string" },
+          "failSceneId": { "type": "string" }
+        }
+      }
+    }
+  }
+}

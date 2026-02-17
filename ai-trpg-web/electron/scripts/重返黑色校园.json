@@ -1,0 +1,181 @@
+{
+  "meta": {
+    "title": "重返黑色校园",
+    "author": "MasterNoah",
+    "ruleSystem": "coc",
+    "version": "1.0"
+  },
+  "scenes": [
+    {
+      "id": "scene_001",
+      "name": "校长办公室",
+      "description": "马卡拉的办公室，调查员在这里接受任务并可以询问相关信息。",
+      "npcIds": [
+        "npc_001"
+      ],
+      "clueIds": [
+        "clue_001",
+        "clue_002",
+        "clue_003",
+        "clue_004"
+      ],
+      "transitionCondition": "调查员完成初步调查或发现重要线索"
+    },
+    {
+      "id": "scene_002",
+      "name": "教师办公室",
+      "description": "教师们在此备课，刘向圆在此迎接调查员。",
+      "npcIds": [
+        "npc_002"
+      ],
+      "clueIds": [
+        "clue_005",
+        "clue_006",
+        "clue_007"
+      ],
+      "transitionCondition": "调查员与教师交谈并获得信息"
+    },
+    {
+      "id": "scene_003",
+      "name": "总务办公室",
+      "description": "张明远在此办公，调查员可以查看相关资料。",
+      "npcIds": [
+        "npc_003"
+      ],
+      "clueIds": [
+        "clue_008",
+        "clue_009",
+        "clue_010"
+      ],
+      "transitionCondition": "调查员查看完办公室资料"
+    },
+    {
+      "id": "scene_004",
+      "name": "教学楼1",
+      "description": "学生在此上课，调查员可以与学生交谈。",
+      "clueIds": [
+        "clue_011",
+        "clue_012"
+      ],
+      "transitionCondition": "调查员与学生交谈并获得信息"
+    },
+    {
+      "id": "scene_005",
+      "name": "地下密室",
+      "description": "马卡拉进行邪恶仪式的场所，调查员需要找到入口。",
+      "transitionCondition": "调查员找到地下密室入口并进入"
+    }
+  ],
+  "npcs": [
+    {
+      "id": "npc_001",
+      "name": "杨·马卡拉",
+      "description": "古城福音中学的出资人兼校长，表面上是善良的神父，实则信仰邪恶神祇。",
+      "dialogueStyle": "和蔼可亲，但隐含威胁"
+    },
+    {
+      "id": "npc_002",
+      "name": "刘向圆",
+      "description": "督学主任，表面上是好老师，实则与马卡拉有暧昧关系。",
+      "dialogueStyle": "热情洋溢，但回避敏感话题"
+    },
+    {
+      "id": "npc_003",
+      "name": "张明远",
+      "description": "总务处处长，发现账目问题但无力改变。",
+      "dialogueStyle": "谨慎，带有无奈"
+    }
+  ],
+  "clues": [
+    {
+      "id": "clue_001",
+      "description": "马卡拉的办公桌上放着一个相框，里面装着一张留有卷发的男子的照片。",
+      "obtainCondition": "调查员查看马卡拉的办公桌"
+    },
+    {
+      "id": "clue_002",
+      "description": "马卡拉的办公桌上放着一个小木盒，里面装着咖啡粉和一个空的油纸包。",
+      "obtainCondition": "调查员查看马卡拉的办公桌"
+    },
+    {
+      "id": "clue_003",
+      "description": "马卡拉的办公桌上放着一些宗教书籍，但缺少《圣经》。",
+      "obtainCondition": "调查员查看马卡拉的办公桌"
+    },
+    {
+      "id": "clue_004",
+      "description": "学校的地基设计图显示地下有复杂的排水设施，入口在学生宿舍附近。",
+      "obtainCondition": "调查员查看学校的资料"
+    },
+    {
+      "id": "clue_005",
+      "description": "刘向圆提到失踪的学生都是好学生，特别是比较聪明或反应快的学生。",
+      "obtainCondition": "调查员询问刘向圆关于失踪学生的情况"
+    },
+    {
+      "id": "clue_006",
+      "description": "有一名学生在失踪前因为身体不舒服请了假。",
+      "obtainCondition": "调查员询问刘向圆关于失踪学生的情况"
+    },
+    {
+      "id": "clue_007",
+      "description": "教师之间有传言说刘向圆是校长私底下的情人。",
+      "obtainCondition": "调查员询问教师关于刘向圆的情况"
+    },
+    {
+      "id": "clue_008",
+      "description": "近5个月以来学校的预算突然增加，且有伪造的嫌疑。",
+      "obtainCondition": "调查员查看学校的预算表"
+    },
+    {
+      "id": "clue_009",
+      "description": "张明远的记事本中提到类似“我究竟该做什么，这不是我想做的事情”的话。",
+      "obtainCondition": "调查员查看张明远的记事本"
+    },
+    {
+      "id": "clue_010",
+      "description": "张明远提到男生宿舍一层两间宿舍的地板渗水，需要修缮。",
+      "obtainCondition": "调查员询问张明远关于宿舍的情况"
+    },
+    {
+      "id": "clue_011",
+      "description": "学生提到校长是一个善良的人，愿意帮助有困难的学生。",
+      "obtainCondition": "调查员询问学生关于校长的情况"
+    },
+    {
+      "id": "clue_012",
+      "description": "学生提到督学主任虽然在正式场合对学生要求严格，但私下里对学生很好。",
+      "obtainCondition": "调查员询问学生关于督学主任的情况"
+    }
+  ],
+  "checks": [
+    {
+      "id": "check_001",
+      "skill": "侦查",
+      "difficulty": "普通",
+      "successSceneId": "scene_001",
+      "failSceneId": "scene_001"
+    },
+    {
+      "id": "check_002",
+      "skill": "医学/科学：药学/科学：化学",
+      "difficulty": "普通",
+      "successSceneId": "scene_001",
+      "failSceneId": "scene_001"
+    },
+    {
+      "id": "check_003",
+      "skill": "图书馆使用",
+      "difficulty": "普通",
+      "successSceneId": "scene_003",
+      "failSceneId": "scene_003"
+    },
+    {
+      "id": "check_004",
+      "skill": "幸运",
+      "difficulty": "普通",
+      "successSceneId": "scene_004",
+      "failSceneId": "scene_004"
+    }
+  ]
+}
