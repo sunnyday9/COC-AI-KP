@@ -51,21 +51,5 @@ export function scriptToChunks(script: TRPGScript, scriptId: string): RAGChunk[]
     }
   }
 
-  if (script.checks) {
-    for (const check of script.checks) {
-      const parts: string[] = [
-        `技能: ${check.skill}`,
-        check.difficulty ? `难度: ${check.difficulty}` : '',
-        check.dc ? `DC: ${check.dc}` : '',
-      ]
-      chunks.push({
-        id: `check-${scriptId}-${check.id}`,
-        content: parts.filter(Boolean).join('\n'),
-        type: 'check',
-        metadata: { scriptId, checkId: check.id },
-      })
-    }
-  }
-
   return chunks
 }

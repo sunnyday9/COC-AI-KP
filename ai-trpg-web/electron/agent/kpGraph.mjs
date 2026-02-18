@@ -78,12 +78,12 @@ export function createKPGraph(invokeLLM) {
       dice_roll: '玩家意图为【投骰】。你应立即调用 roll_dice 工具取得随机结果（d100 用 sides=100，d6 用 sides=6），不要等待玩家再次确认或提醒。根据工具返回的 roll 写出「骰子结果：XX」再叙述剧情。每次投骰都须重新调用 roll_dice，勿重复使用同一数字。',
       examine: '玩家意图为【调查/观察】。请描述其调查结果，必要时可提示技能检定。若玩家发现重要线索，调用 grant_clue(clueId) 授予线索。',
       talk: '玩家意图为【对话/询问】。请以 NPC 身份回应或推动对话。',
-      move: '玩家意图为【移动/行动】。若玩家移动到新地点或场景发生变化，调用 transition_scene(sceneId) 切换场景，然后描述新场景。',
+      move: '玩家意图为【移动/行动】。若玩家要去的目标地点在「剧本场景列表」中，调用 transition_scene(sceneId) 切换并描述新场景。若目标地点不在剧本列表中，切勿调用 transition_scene；应告知该处空无一人/无事发生，并引导玩家回到可选场景或当前场景。',
       combat: '玩家意图为【战斗】。造成伤害时调用 adjust_hp，理智损失时调用 adjust_san。',
       narrative: '玩家意图为【一般叙事/行动】。请根据情境回应并推进剧情。',
     }[intent] || '玩家意图为【一般叙事/行动】。请根据情境回应并推进剧情。'
 
-    const toolHint = '你有工具 adjust_hp、adjust_san、adjust_mp 可调整调查员 HP/SAN/MP；roll_dice(sides) 用于投骰，每次需要骰子结果时都必须调用 roll_dice 取得新的随机数；transition_scene(sceneId) 用于场景转换，当玩家移动到新地点或剧情推进到新场景时调用；grant_clue(clueId) 用于授予线索，当玩家发现重要信息或证据时调用。当玩家受伤、失去理智、使用魔法时，请调用相应工具，delta 为正数表示恢复、负数表示减少。'
+    const toolHint = '你有工具 adjust_hp、adjust_san、adjust_mp 可调整调查员 HP/SAN/MP；roll_dice(sides) 用于投骰，每次需要骰子结果时都必须调用 roll_dice 取得新的随机数；transition_scene(sceneId) 用于场景转换，仅当目标场景在「剧本场景列表」中时调用，否则不得调用；grant_clue(clueId) 用于授予线索，当玩家发现重要信息或证据时调用。当玩家受伤、失去理智、使用魔法时，请调用相应工具，delta 为正数表示恢复、负数表示减少。'
     const antiRepeatHint = '若玩家未推动剧情、场景未变或只是重复/追问同一件事，请简短回应，不要重复已描述过的场景或台词；可简要确认或给一两句推进即可。'
 
     const systemIdx = msgs.findIndex((m) => m.role === 'system')

@@ -147,35 +147,5 @@
       "description": "学生提到督学主任虽然在正式场合对学生要求严格，但私下里对学生很好。",
       "obtainCondition": "调查员询问学生关于督学主任的情况"
     }
-  ],
-  "checks": [
-    {
-      "id": "check_001",
-      "skill": "侦查",
-      "difficulty": "普通",
-      "successSceneId": "scene_001",
-      "failSceneId": "scene_001"
-    },
-    {
-      "id": "check_002",
-      "skill": "医学/科学：药学/科学：化学",
-      "difficulty": "普通",
-      "successSceneId": "scene_001",
-      "failSceneId": "scene_001"
-    },
-    {
-      "id": "check_003",
-      "skill": "图书馆使用",
-      "difficulty": "普通",
-      "successSceneId": "scene_003",
-      "failSceneId": "scene_003"
-    },
-    {
-      "id": "check_004",
-      "skill": "幸运",
-      "difficulty": "普通",
-      "successSceneId": "scene_004",
-      "failSceneId": "scene_004"
-    }
   ]
 }

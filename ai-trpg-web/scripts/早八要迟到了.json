@@ -145,42 +145,5 @@
       "description": "关于传染病的信息",
       "obtainCondition": "通过询问医生或在医院查找资料"
     }
-  ],
-  "checks": [
-    {
-      "id": "check_001",
-      "skill": "侦查",
-      "difficulty": "普通",
-      "successSceneId": "scene_002",
-      "failSceneId": "scene_002"
-    },
-    {
-      "id": "check_002",
-      "skill": "科学：物理学",
-      "difficulty": "困难",
-      "successSceneId": "scene_003",
-      "failSceneId": "scene_003"
-    },
-    {
-      "id": "check_003",
-      "skill": "图书馆使用",
-      "difficulty": "普通",
-      "successSceneId": "scene_004",
-      "failSceneId": "scene_004"
-    },
-    {
-      "id": "check_004",
-      "skill": "开锁",
-      "difficulty": "普通",
-      "successSceneId": "scene_005",
-      "failSceneId": "scene_005"
-    },
-    {
-      "id": "check_005",
-      "skill": "潜行",
-      "difficulty": "普通",
-      "successSceneId": "scene_006",
-      "failSceneId": "scene_006"
-    }
   ]
 }

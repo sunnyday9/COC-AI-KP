@@ -35,15 +35,25 @@ export function buildPersonalInterestSkills(
   return out
 }
 
-/** 合并职业分配与兴趣技能（同键时职业优先） */
+/** 合并职业分配与兴趣技能。若同一技能既是职业技能又是兴趣技能，取职业值 + 兴趣加成（+20）。 */
 export function mergeSkills(
   occupation: Record<string, number>,
   personalInterest: Record<string, number>
 ): Record<string, number> {
-  const merged = { ...personalInterest }
-  Object.entries(occupation).forEach(([k, v]) => {
-    merged[k] = v
-  })
+  const merged: Record<string, number> = {}
+  const allKeys = new Set([...Object.keys(occupation), ...Object.keys(personalInterest)])
+  for (const k of allKeys) {
+    const occ = occupation[k]
+    const pers = personalInterest[k]
+    if (occ != null && pers != null) {
+      // 职业技能同时选了兴趣加成：职业值 + 兴趣加成（叠加）
+      merged[k] = Math.min(99, occ + PERSONAL_INTEREST_BONUS)
+    } else if (occ != null) {
+      merged[k] = occ
+    } else if (pers != null) {
+      merged[k] = pers
+    }
+  }
   return merged
 }
 

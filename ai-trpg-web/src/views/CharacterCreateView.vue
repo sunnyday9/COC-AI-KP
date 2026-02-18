@@ -3,7 +3,7 @@ import { ref, computed, onMounted } from 'vue'
 import { useRouter } from 'vue-router'
 import { storeToRefs } from 'pinia'
 import { useGameStore } from '../stores/gameStore'
-import { OCCUPATION_SKILL_VALUES, PERSONAL_INTEREST_COUNT } from '../types/character'
+import { OCCUPATION_SKILL_VALUES, PERSONAL_INTEREST_BONUS, PERSONAL_INTEREST_COUNT } from '../types/character'
 import {
   COC7_OCCUPATIONS,
   COC7_SKILLS,
@@ -53,6 +53,17 @@ function availableForInterpersonalSlot(slotIndex: number): string[] {
     if (k && idx !== slotIndex) used.add(k)
   })
   return INTERPERSONAL_SKILL_IDS.filter((id) => !used.has(id) || occKeys[slotIndex] === id)
+}
+
+/** 兴趣技能展示文案：职业技能则显示「职业X%→X+20」，否则显示「基础X%→X+20」 */
+function interestSkillLabel(skillId: string): string {
+  const occIdx = occupationSkillKeys.value.indexOf(skillId)
+  const base = getSkillBase(skillId)
+  if (occIdx >= 0 && OCCUPATION_SKILL_VALUES[occIdx] != null) {
+    const occVal = OCCUPATION_SKILL_VALUES[occIdx]
+    return `${getSkillName(skillId)} (职业${occVal}% → ${Math.min(99, occVal + PERSONAL_INTEREST_BONUS)}%)`
+  }
+  return `${getSkillName(skillId)} (基础${base}% → ${Math.min(99, base + PERSONAL_INTEREST_BONUS)}%)`
 }
 
 /** 兴趣技能可选：仅排除其他兴趣槽位已选（可与职业技能重叠，叠加成功率），保留当前槽位已选 */
@@ -200,7 +211,7 @@ onMounted(() => {
     </section>
 
     <section>
-      <h2 class="text-lg font-semibold text-gray-800 dark:text-gray-100 mt-4">兴趣技能（任选 4 项，每项 +20%）</h2>
+      <h2 class="text-lg font-semibold text-gray-800 dark:text-gray-100 mt-4">兴趣技能（任选 4 项，每项 +20%，可与职业技能重叠叠加）</h2>
       <ul class="mt-2 space-y-2">
         <li v-for="(pk, idx) in personalInterestKeys" :key="idx" class="flex items-center gap-2">
           <select
@@ -210,7 +221,7 @@ onMounted(() => {
           >
             <option value="">— 选择 —</option>
             <option v-for="sid in availableForInterestSlot(idx)" :key="sid" :value="sid">
-              {{ getSkillName(sid) }} (基础{{ getSkillBase(sid) }}% → {{ getSkillBase(sid) + 20 }}%)
+              {{ interestSkillLabel(sid) }}
             </option>
           </select>
         </li>
