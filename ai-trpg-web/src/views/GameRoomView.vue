@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref, watch, nextTick, onMounted, computed } from 'vue'
+import { ref, watch, nextTick, onMounted } from 'vue'
 import { useRouter } from 'vue-router'
 import { storeToRefs } from 'pinia'
 import { useGameStore } from '../stores/gameStore'
@@ -8,21 +8,10 @@ import PlayerStatsBar from '../components/game/PlayerStatsBar.vue'
 
 const router = useRouter()
 const gameStore = useGameStore()
-const { messages, isSending, scriptId, script, playerName, gamePhase, characterSheet, currentSceneId, cluesObtained } = storeToRefs(gameStore)
+const { messages, isSending, storyId, storyName, playerName, gamePhase, characterSheet, currentScene, cluesObtained } = storeToRefs(gameStore)
 const inputText = ref('')
 const messagesEnd = ref<HTMLElement | null>(null)
-
-const currentScene = computed(() => {
-  if (!script.value || !currentSceneId.value) return null
-  return script.value.scenes.find((s) => s.id === currentSceneId.value) ?? null
-})
-
-const obtainedClues = computed(() => {
-  if (!script.value?.clues || cluesObtained.value.length === 0) return []
-  return cluesObtained.value
-    .map((cid) => script.value?.clues?.find((c) => c.id === cid))
-    .filter((c): c is NonNullable<typeof c> => c !== undefined)
-})
+const cluesPanelOpen = ref(false)
 
 function scrollToBottom() {
   nextTick(() => {
@@ -33,7 +22,7 @@ function scrollToBottom() {
 watch(messages, () => scrollToBottom(), { deep: true })
 
 onMounted(async () => {
-  if (!scriptId.value || gamePhase.value !== 'playing' || !characterSheet.value) {
+  if (!storyId.value || gamePhase.value !== 'playing' || !characterSheet.value) {
     router.replace('/')
     return
   }
@@ -59,64 +48,108 @@ function handleKeydown(e: KeyboardEvent) {
 </script>
 
 <template>
-  <div class="flex flex-1 min-h-0">
+  <div class="flex flex-1 min-h-0 h-full">
+    <!-- Main chat column -->
     <div class="flex flex-col flex-1 min-h-0 min-w-0">
-      <div class="p-4 border-b border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-800">
-        <div class="flex items-start justify-between gap-4">
-          <div class="flex-1">
-            <h1 class="text-xl font-bold text-gray-800 dark:text-gray-100">游戏房间</h1>
-            <p class="text-sm text-gray-500 dark:text-gray-400 mt-0.5">
-              {{ script?.meta?.title ?? scriptId }} · {{ playerName }}
-            </p>
-            <div v-if="currentScene" class="mt-2 text-sm text-gray-600 dark:text-gray-300">
-              <span class="font-medium">当前场景：</span>{{ currentScene.name }}
-            </div>
-          </div>
-          <div v-if="obtainedClues.length > 0" class="flex-shrink-0 min-w-[200px] max-w-[300px]">
-            <div class="text-xs font-semibold text-gray-600 dark:text-gray-400 mb-1">已获得线索</div>
-            <div class="space-y-1 max-h-32 overflow-y-auto">
-              <div
-                v-for="clue in obtainedClues"
-                :key="clue.id"
-                class="text-xs px-2 py-1 rounded bg-amber-50 dark:bg-amber-900/20 border border-amber-200 dark:border-amber-800 text-amber-900 dark:text-amber-200"
-              >
-                {{ clue.description || clue.id }}
-              </div>
-            </div>
+      <!-- Header bar -->
+      <div class="px-5 py-3 border-b border-gray-800 bg-gray-900/60 flex items-center gap-4">
+        <div class="flex-1 min-w-0">
+          <h1 class="font-serif text-lg text-parchment-200 tracking-wide truncate">
+            {{ storyName || storyId }}
+          </h1>
+          <div class="flex items-center gap-3 mt-0.5 text-xs text-gray-500">
+            <span>{{ playerName }}</span>
+            <span v-if="currentScene" class="flex items-center gap-1">
+              <span class="text-cthulhu-300">&#x26E9;</span>
+              {{ currentScene }}
+            </span>
           </div>
         </div>
+
+        <!-- Clues toggle -->
+        <button v-if="cluesObtained.length > 0"
+                type="button"
+                @click="cluesPanelOpen = !cluesPanelOpen"
+                class="relative flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium
+                       bg-parchment-900/30 border border-parchment-700/30 text-parchment-300
+                       hover:bg-parchment-900/50 transition-all duration-200">
+          <span>&#x1F4DC;</span>
+          线索
+          <span class="ml-1 px-1.5 py-0.5 rounded-full bg-parchment-700/40 text-[10px]
+                       text-parchment-200 font-mono">{{ cluesObtained.length }}</span>
+        </button>
       </div>
 
-      <div class="flex-1 min-h-0 overflow-y-auto p-4 space-y-4">
-      <p v-if="messages.length === 0 && !isSending" class="text-center text-gray-500 dark:text-gray-400 py-8">
-        等待开场...
-      </p>
-      <ChatMessage v-for="msg in messages" :key="msg.id" :msg="msg" />
+      <!-- Chat area -->
+      <div class="flex-1 min-h-0 overflow-y-auto px-4 py-5 space-y-4
+                  bg-gradient-to-b from-gray-950 via-gray-950 to-gray-900/50">
+        <p v-if="messages.length === 0 && !isSending"
+           class="text-center text-gray-600 py-12 font-serif text-sm italic">
+          "黑暗中，一个故事正在苏醒..."
+        </p>
+        <ChatMessage v-for="msg in messages" :key="msg.id" :msg="msg" />
         <div ref="messagesEnd" />
       </div>
 
+      <!-- Player stats -->
       <PlayerStatsBar />
 
-      <div class="p-4 border-t border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-800">
-      <div class="flex gap-2">
-        <textarea
-          v-model="inputText"
-          @keydown="handleKeydown"
-          placeholder="输入行动或对话..."
-          rows="2"
-          :disabled="isSending"
-          class="flex-1 rounded-lg border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-800 px-3 py-2 text-gray-900 dark:text-gray-100 placeholder-gray-400 resize-none focus:ring-2 focus:ring-blue-500 focus:border-transparent disabled:opacity-50"
-        />
-        <button
-          type="button"
-          @click="handleSend"
-          :disabled="!inputText.trim() || isSending"
-          class="self-end rounded-lg bg-blue-600 px-4 py-2 text-white hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed"
-        >
-          {{ isSending ? '...' : '发送' }}
-        </button>
-      </div>
+      <!-- Input area -->
+      <div class="px-4 py-3 border-t border-gray-800 bg-gray-900/80">
+        <div class="flex gap-2 items-end">
+          <textarea
+            v-model="inputText"
+            @keydown="handleKeydown"
+            placeholder="描述你的行动..."
+            rows="2"
+            :disabled="isSending"
+            class="gothic-input resize-none text-sm leading-relaxed min-h-[2.5rem]"
+          />
+          <button
+            type="button"
+            @click="handleSend"
+            :disabled="!inputText.trim() || isSending"
+            class="gothic-btn shrink-0 px-5 py-2 self-end"
+          >
+            <span v-if="isSending" class="inline-block w-4 h-4 border-2 border-parchment-400
+                        border-t-transparent rounded-full animate-spin" />
+            <span v-else>发送</span>
+          </button>
+        </div>
       </div>
     </div>
+
+    <!-- Clues side panel (slides in) -->
+    <transition name="slide-panel">
+      <aside v-if="cluesPanelOpen && cluesObtained.length > 0"
+             class="w-64 border-l border-gray-800 bg-gray-900/90 flex flex-col shrink-0">
+        <div class="px-4 py-3 border-b border-gray-800 flex items-center justify-between">
+          <h2 class="font-serif text-sm text-parchment-300 tracking-wide">已获得线索</h2>
+          <button type="button"
+                  @click="cluesPanelOpen = false"
+                  class="text-gray-500 hover:text-gray-300 text-xs">&#x2715;</button>
+        </div>
+        <div class="flex-1 overflow-y-auto p-3 space-y-2">
+          <div v-for="(clue, idx) in cluesObtained"
+               :key="idx"
+               class="p-3 rounded-lg bg-parchment-900/20 border border-parchment-800/30 text-xs text-parchment-300 leading-relaxed">
+            {{ clue }}
+          </div>
+        </div>
+      </aside>
+    </transition>
   </div>
 </template>
+
+<style scoped>
+.slide-panel-enter-active,
+.slide-panel-leave-active {
+  transition: width 0.2s ease, opacity 0.2s ease;
+}
+.slide-panel-enter-from,
+.slide-panel-leave-to {
+  width: 0;
+  opacity: 0;
+  overflow: hidden;
+}
+</style>

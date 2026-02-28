@@ -1,139 +1,221 @@
 <script setup lang="ts">
 import { ref, onMounted, computed } from 'vue'
 import { storeToRefs } from 'pinia'
-import { useScriptStore } from '../stores/scriptStore'
+import { useStoryStore } from '../stores/storyStore'
+import { listIndexedStories, deleteStoryIndex, type IndexedStory } from '../services/ragService'
+import { useToast } from '../composables/useToast'
 
-const scriptStore = useScriptStore()
-const { scriptFiles, currentScript, currentScriptPath, isLoading, error } = storeToRefs(scriptStore)
-const indexLoading = ref(false)
+const toast = useToast()
+const storyStore = useStoryStore()
+const { storyFiles, isLoading: storiesLoading } = storeToRefs(storyStore)
+const hasElectron = computed(() => !!(window as { electronAPI?: unknown }).electronAPI)
 
-const hasElectron = computed(() => !!window.electronAPI)
+const indexedStories = ref<IndexedStory[]>([])
+const indexStatus = ref<Record<string, 'idle' | 'loading' | 'ok' | 'error'>>({})
+
+async function refreshIndexed() {
+  try { indexedStories.value = await listIndexedStories() } catch { indexedStories.value = [] }
+}
 
 onMounted(() => {
-  scriptStore.loadScripts()
+  storyStore.loadStories()
+  refreshIndexed()
 })
 
-async function handleIndexRag(path: string) {
-  indexLoading.value = true
-  try {
-    const result = await scriptStore.indexForRag(path)
-    if (result.ok) alert('RAG 索引已建立')
-    else alert('索引失败: ' + (result.error || '未知错误'))
-  } finally {
-    indexLoading.value = false
-  }
-}
-
 async function handleImport() {
-  const result = await scriptStore.importScript()
-  if (result?.ok) {
-    alert('导入成功')
-  } else if (result?.error && result.error !== 'cancelled') {
-    alert('导入失败: ' + result.error)
+  const result = await storyStore.importStory()
+  if (result?.ok) toast.success('故事文件导入成功')
+  else if (result?.error && result.error !== 'cancelled') toast.error('导入失败: ' + result.error)
+}
+
+async function handleIndexStory(path: string) {
+  indexStatus.value[path] = 'loading'
+  try {
+    const result = await storyStore.indexStoryForRag(path)
+    if (result.ok) {
+      indexStatus.value[path] = 'ok'
+      toast.success(`索引成功！共 ${result.indexed || 0} 个信息块`)
+      await refreshIndexed()
+    } else {
+      indexStatus.value[path] = 'error'
+      toast.error(`索引失败：${result.error || '未知错误'}`)
+    }
+  } catch (e) {
+    indexStatus.value[path] = 'error'
+    toast.error(`索引失败：${e instanceof Error ? e.message : String(e)}`)
   }
 }
 
-async function handleDelete(path: string, name: string) {
-  if (!confirm(`确定要删除剧本「${name}」吗？`)) return
-  await scriptStore.deleteScript(path)
+async function handleIndexAll() {
+  const result = await storyStore.indexAllStories()
+  if (result.ok) toast.success(`索引完成！共 ${result.total} 个信息块`)
+  else toast.warning(`索引完成（${result.errors.length} 个错误），共 ${result.total} 个信息块`)
+  await refreshIndexed()
 }
 
-function handleSelect(path: string) {
-  scriptStore.loadScript(path)
+async function handleDeleteStory(path: string, name: string) {
+  await storyStore.deleteStory(path)
+  toast.info(`已删除文件「${name}」`)
 }
 
-function closeDetail() {
-  scriptStore.clearCurrent()
+async function handleDeleteIndex(storyId: string, name: string) {
+  try {
+    await deleteStoryIndex(storyId)
+    toast.info(`已删除索引「${name}」`)
+    await refreshIndexed()
+  } catch (e) {
+    toast.error(`删除索引失败：${e instanceof Error ? e.message : String(e)}`)
+  }
+}
+
+function isIndexed(path: string): boolean {
+  const id = storyStore.storyFiles.find((f) => f.path === path)
+  if (!id) return false
+  const storyId = path.replace(/[^a-zA-Z0-9_\-\u4e00-\u9fff]/g, '_')
+  return indexedStories.value.some((s) => s.storyId === storyId)
+}
+
+function formatDate(ts: number): string {
+  if (!ts) return '—'
+  return new Date(ts).toLocaleDateString('zh-CN', { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' })
 }
 </script>
 
 <template>
-  <div class="p-6 flex flex-col h-full">
-    <div class="flex items-center justify-between">
-      <div>
-        <h1 class="text-2xl font-bold text-gray-800 dark:text-gray-100">剧本管理</h1>
-        <p class="mt-1 text-gray-600 dark:text-gray-400">导入、浏览和管理 TRPG 剧本（COC / D&D）</p>
+  <div class="min-h-screen flex flex-col">
+    <!-- Header -->
+    <div class="px-6 pt-8 pb-4 max-w-4xl mx-auto w-full">
+      <div class="flex items-center justify-between">
+        <div>
+          <h1 class="gothic-heading text-2xl font-bold">故事管理</h1>
+          <p class="mt-1 text-sm text-gray-500">导入故事文件并索引到向量数据库，供 AI KP 参考</p>
+        </div>
+        <div v-if="hasElectron" class="flex gap-2">
+          <button type="button" @click="handleImport"
+                  class="gothic-btn text-sm">
+            导入故事
+          </button>
+        </div>
       </div>
-      <button
-        v-if="hasElectron"
-        type="button"
-        @click="handleImport"
-        class="rounded-md bg-blue-600 px-4 py-2 text-white hover:bg-blue-700 disabled:opacity-50"
-        :disabled="isLoading"
-      >
-        导入剧本
-      </button>
+      <div class="mt-3 w-16 h-px bg-gradient-to-r from-eldritch-500 to-transparent" />
     </div>
 
-    <p v-if="!hasElectron" class="mt-4 text-amber-600 dark:text-amber-400 text-sm">
-      请在 Electron 环境中使用剧本管理功能
-    </p>
+    <div class="flex-1 px-6 pb-12 max-w-4xl mx-auto w-full space-y-6">
 
-    <p v-if="error" class="mt-4 text-red-600 dark:text-red-400">{{ error }}</p>
+      <!-- No Electron -->
+      <p v-if="!hasElectron" class="gothic-card p-5 text-center text-sm text-parchment-400">
+        请在 Electron 桌面应用中运行以使用完整功能
+      </p>
 
-    <div v-if="isLoading && scriptFiles.length === 0" class="mt-6 text-gray-500">加载中...</div>
+      <template v-else>
+        <!-- Story files section -->
+        <section>
+          <div class="flex items-center justify-between mb-3">
+            <h2 class="gothic-heading text-sm font-semibold flex items-center gap-2">
+              <span class="text-parchment-400">&#x1F4C4;</span> 故事文件
+            </h2>
+            <div class="flex gap-2">
+              <button type="button" @click="storyStore.loadStories()" :disabled="storiesLoading"
+                      class="text-[11px] text-eldritch-400 hover:text-eldritch-300 disabled:opacity-50">
+                刷新
+              </button>
+              <button v-if="storyFiles.length" type="button" @click="handleIndexAll"
+                      class="text-[11px] text-cthulhu-300 hover:text-cthulhu-200">
+                索引全部
+              </button>
+            </div>
+          </div>
 
-    <ul v-else-if="scriptFiles.length" class="mt-6 space-y-2 flex-1 overflow-auto">
-      <li
-        v-for="file in scriptFiles"
-        :key="file.path"
-        class="flex items-center justify-between p-3 rounded-lg bg-gray-200 dark:bg-gray-800 hover:bg-gray-300 dark:hover:bg-gray-700"
-      >
-        <button
-          type="button"
-          class="flex-1 text-left"
-          @click="handleSelect(file.path)"
-        >
-          <span class="font-medium text-gray-900 dark:text-gray-100">{{ file.name }}</span>
-        </button>
-        <button
-          v-if="hasElectron"
-          type="button"
-          @click="handleDelete(file.path, file.name)"
-          class="ml-2 text-red-600 hover:text-red-700 dark:text-red-400"
-          title="删除"
-        >
-          删除
-        </button>
-      </li>
-    </ul>
+          <!-- Loading -->
+          <div v-if="storiesLoading && storyFiles.length === 0" class="gothic-card p-8 text-center">
+            <div class="inline-block w-6 h-6 border-2 border-eldritch-500 border-t-transparent rounded-full animate-spin" />
+            <p class="mt-3 text-gray-500 text-sm">加载中...</p>
+          </div>
 
-    <p v-else-if="!isLoading && hasElectron" class="mt-6 text-gray-500">暂无剧本，点击「导入剧本」添加</p>
+          <!-- File list -->
+          <div v-else-if="storyFiles.length" class="space-y-2">
+            <div v-for="story in storyFiles" :key="story.path"
+                 class="gothic-card p-3.5 flex items-center justify-between group">
+              <div class="flex items-center gap-3 min-w-0">
+                <div class="flex-shrink-0 w-9 h-9 rounded-lg bg-parchment-900/30 border border-parchment-800/40
+                            flex items-center justify-center text-parchment-400 font-serif text-sm">
+                  {{ story.name.charAt(0) }}
+                </div>
+                <div class="min-w-0">
+                  <h3 class="font-medium text-parchment-200 truncate text-sm">{{ story.name }}</h3>
+                  <p class="text-[10px] mt-0.5" :class="isIndexed(story.path) ? 'text-cthulhu-400' : 'text-gray-600'">
+                    {{ isIndexed(story.path) ? '已索引' : '未索引' }}
+                  </p>
+                </div>
+              </div>
+              <div class="flex gap-1.5 shrink-0">
+                <button type="button" @click="handleIndexStory(story.path)"
+                        :disabled="indexStatus[story.path] === 'loading'"
+                        class="text-[11px] px-2.5 py-1 rounded-md transition-all duration-200
+                               bg-cthulhu-800/50 border border-cthulhu-600/30 text-cthulhu-200
+                               hover:bg-cthulhu-700/50 disabled:opacity-50">
+                  {{ indexStatus[story.path] === 'loading' ? '索引中...'
+                   : indexStatus[story.path] === 'ok' ? '✓ 完成' : '索引' }}
+                </button>
+                <button type="button" @click="handleDeleteStory(story.path, story.name)"
+                        class="text-[11px] px-2.5 py-1 rounded-md transition-all duration-200
+                               bg-blood-900/30 border border-blood-700/30 text-blood-300
+                               hover:bg-blood-800/40 opacity-0 group-hover:opacity-100">
+                  删除
+                </button>
+              </div>
+            </div>
+          </div>
 
-    <!-- Detail panel -->
-    <div
-      v-if="currentScript"
-      class="mt-6 p-4 rounded-lg bg-gray-100 dark:bg-gray-800 border border-gray-200 dark:border-gray-700"
-    >
-      <div class="flex items-center justify-between mb-3">
-        <h2 class="text-lg font-semibold text-gray-800 dark:text-gray-100">{{ currentScript.meta.title }}</h2>
-        <button type="button" @click="closeDetail" class="text-gray-500 hover:text-gray-700">关闭</button>
-      </div>
-      <dl class="grid grid-cols-2 gap-2 text-sm">
-        <dt class="text-gray-500">作者</dt>
-        <dd>{{ currentScript.meta.author || '-' }}</dd>
-        <dt class="text-gray-500">规则</dt>
-        <dd>{{ currentScript.meta.ruleSystem === 'coc' ? '克苏鲁' : 'D&D' }}</dd>
-        <dt class="text-gray-500">场景数</dt>
-        <dd>{{ currentScript.scenes.length }}</dd>
-        <dt class="text-gray-500">NPC 数</dt>
-        <dd>{{ currentScript.npcs?.length ?? 0 }}</dd>
-      </dl>
-      <div class="mt-3 text-sm text-gray-600 dark:text-gray-400 max-h-40 overflow-auto">
-        <p class="font-medium mb-1">场景列表</p>
-        <ul class="list-disc list-inside">
-          <li v-for="s in currentScript.scenes" :key="s.id">{{ s.name }}</li>
-        </ul>
-      </div>
-      <button
-        v-if="currentScriptPath"
-        type="button"
-        @click="handleIndexRag(currentScriptPath)"
-        :disabled="indexLoading"
-        class="mt-3 rounded-md bg-amber-600 px-3 py-1.5 text-sm text-white hover:bg-amber-700 disabled:opacity-50"
-      >
-        {{ indexLoading ? '索引中...' : '建立 RAG 索引' }}
-      </button>
+          <!-- Empty -->
+          <div v-else class="gothic-card p-8 text-center">
+            <p class="text-lg text-gray-600 font-serif mb-2">"书架上空无一物..."</p>
+            <p class="text-sm text-gray-500">点击「导入故事」添加 PDF、TXT 或 MD 文件</p>
+          </div>
+        </section>
+
+        <!-- Indexed stories section -->
+        <section>
+          <div class="flex items-center justify-between mb-3">
+            <h2 class="gothic-heading text-sm font-semibold flex items-center gap-2">
+              <span class="text-cthulhu-400">&#x1F5C3;</span> 已索引故事
+            </h2>
+            <button type="button" @click="refreshIndexed"
+                    class="text-[11px] text-eldritch-400 hover:text-eldritch-300">
+              刷新
+            </button>
+          </div>
+
+          <div v-if="indexedStories.length" class="space-y-2">
+            <div v-for="idx in indexedStories" :key="idx.storyId"
+                 class="gothic-card p-3.5 flex items-center justify-between group">
+              <div class="flex items-center gap-3 min-w-0">
+                <div class="flex-shrink-0 w-9 h-9 rounded-lg bg-cthulhu-900/40 border border-cthulhu-700/40
+                            flex items-center justify-center text-cthulhu-300 font-serif text-sm">
+                  {{ idx.name.charAt(0) }}
+                </div>
+                <div class="min-w-0">
+                  <h3 class="font-medium text-parchment-200 truncate text-sm">{{ idx.name }}</h3>
+                  <p class="text-[10px] text-gray-500 mt-0.5">
+                    {{ idx.chunkCount }} 个信息块
+                    <span v-if="idx.indexedAt" class="ml-2">{{ formatDate(idx.indexedAt) }}</span>
+                  </p>
+                </div>
+              </div>
+              <button type="button" @click="handleDeleteIndex(idx.storyId, idx.name)"
+                      class="text-[11px] px-2.5 py-1 rounded-md transition-all duration-200
+                             bg-blood-900/30 border border-blood-700/30 text-blood-300
+                             hover:bg-blood-800/40 opacity-0 group-hover:opacity-100 shrink-0">
+                删除索引
+              </button>
+            </div>
+          </div>
+
+          <div v-else class="text-sm text-gray-600 py-4 text-center italic font-serif">
+            暂无已索引的故事
+          </div>
+        </section>
+      </template>
     </div>
   </div>
 </template>

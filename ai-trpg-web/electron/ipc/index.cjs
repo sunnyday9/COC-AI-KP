@@ -3,6 +3,7 @@ const { registerFileHandlers } = require('./fileHandlers.cjs')
 const { registerSaveHandlers } = require('./saveHandlers.cjs')
 const { registerAIHandlers } = require('./aiHandlers.cjs')
 const { registerKPAgentHandlers } = require('./kpAgentHandlers.cjs')
+const { registerRAGHandlers } = require('./ragHandlers.cjs')
 
 function registerAllHandlers() {
   registerSettingsHandlers()
@@ -10,6 +11,7 @@ function registerAllHandlers() {
   registerSaveHandlers()
   registerAIHandlers()
   registerKPAgentHandlers()
+  registerRAGHandlers()
 }
 
 module.exports = { registerAllHandlers }

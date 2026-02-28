@@ -25,17 +25,13 @@ const occupation = computed(() =>
   COC7_OCCUPATIONS.find((o) => o.id === selectedOccupationId.value) ?? null
 )
 
-/** 9 个职业技能键（8 来自模板解析 + Credit Rating），与 OCCUPATION_SKILL_VALUES 一一对应 */
 const occupationSkillKeys = ref<string[]>([])
-/** 每个槽位是固定技能还是需选择：'fixed' | 'interpersonal' | 'any' */
 const slotTypes = ref<('fixed' | 'interpersonal' | 'any')[]>([])
-/** 属性（投掷后填入） */
 const attributes = ref<COCAttributes | null>(null)
-/** 4 个兴趣技能 id */
 const personalInterestKeys = ref<string[]>(['', '', '', ''])
 const playerName = ref('调查员')
+const attrAnimating = ref(false)
 
-/** 可选技能：用于「任选一」槽位（排除其他槽位已选，但保留当前槽位已选以便显示） */
 function availableForAnySlot(slotIndex: number): string[] {
   const keys = occupationSkillKeys.value
   const used = new Set<string>()
@@ -45,7 +41,6 @@ function availableForAnySlot(slotIndex: number): string[] {
   return COC7_SKILLS.filter((s) => s.id !== 'Cthulhu Mythos' && (!used.has(s.id) || keys[slotIndex] === s.id)).map((s) => s.id)
 }
 
-/** 人际技能可选：排除其他槽位已选（含职业技和其他人际槽位），保留当前槽位已选 */
 function availableForInterpersonalSlot(slotIndex: number): string[] {
   const occKeys = occupationSkillKeys.value
   const used = new Set<string>()
@@ -55,7 +50,6 @@ function availableForInterpersonalSlot(slotIndex: number): string[] {
   return INTERPERSONAL_SKILL_IDS.filter((id) => !used.has(id) || occKeys[slotIndex] === id)
 }
 
-/** 兴趣技能展示文案：职业技能则显示「职业X%→X+20」，否则显示「基础X%→X+20」 */
 function interestSkillLabel(skillId: string): string {
   const occIdx = occupationSkillKeys.value.indexOf(skillId)
   const base = getSkillBase(skillId)
@@ -66,7 +60,6 @@ function interestSkillLabel(skillId: string): string {
   return `${getSkillName(skillId)} (基础${base}% → ${Math.min(99, base + PERSONAL_INTEREST_BONUS)}%)`
 }
 
-/** 兴趣技能可选：仅排除其他兴趣槽位已选（可与职业技能重叠，叠加成功率），保留当前槽位已选 */
 function availableForInterestSlot(slotIndex: number): string[] {
   const interestKeys = personalInterestKeys.value
   const used = new Set<string>()
@@ -115,7 +108,9 @@ function setPersonalInterest(index: number, skillId: string) {
 }
 
 function rollAttrs() {
+  attrAnimating.value = true
   attributes.value = rollAttributes()
+  setTimeout(() => { attrAnimating.value = false }, 600)
 }
 
 function canConfirm(): boolean {
@@ -152,108 +147,155 @@ onMounted(() => {
 </script>
 
 <template>
-  <div class="p-6 max-w-2xl space-y-6">
-    <h1 class="text-2xl font-bold text-gray-800 dark:text-gray-100">创建角色</h1>
-    <p class="text-gray-600 dark:text-gray-400">
-      职业：<strong>{{ selectedOccupationName }}</strong>。分配职业技能与兴趣技能，投掷属性。此步骤不使用 AI。
-    </p>
-
-    <section>
-      <h2 class="text-lg font-semibold text-gray-800 dark:text-gray-100 mt-4">职业技能（9 项：70, 60, 60, 50, 50, 50, 40, 40, 40）</h2>
-      <ul class="mt-2 space-y-2">
-        <li
-          v-for="(key, i) in occupationSkillKeys"
-          :key="i"
-          class="flex items-center gap-2 flex-wrap"
-        >
-          <span class="w-8 text-gray-500 dark:text-gray-400">{{ OCCUPATION_SKILL_VALUES[i] }}%</span>
-          <template v-if="slotTypes[i] === 'fixed'">
-            <span class="font-medium text-gray-900 dark:text-gray-100">{{ getSkillName(key) }}</span>
-          </template>
-          <template v-else-if="slotTypes[i] === 'interpersonal'">
-            <select
-              :value="key"
-              @change="(e) => setSlotSkill(i, (e.target as HTMLSelectElement).value)"
-              class="block min-w-[11rem] py-2 px-3 min-h-[2.5rem] rounded-md border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-800 text-gray-900 dark:text-gray-100 text-sm focus:ring-2 focus:ring-blue-500 focus:border-transparent"
-            >
-              <option value="">— 选择 —</option>
-              <option v-for="sid in availableForInterpersonalSlot(i)" :key="sid" :value="sid">{{ getSkillName(sid) }}</option>
-            </select>
-          </template>
-          <template v-else>
-            <select
-              :value="key"
-              @change="(e) => setSlotSkill(i, (e.target as HTMLSelectElement).value)"
-              class="block min-w-[11rem] py-2 px-3 min-h-[2.5rem] rounded-md border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-800 text-gray-900 dark:text-gray-100 text-sm focus:ring-2 focus:ring-blue-500 focus:border-transparent"
-            >
-              <option value="">— 选择 —</option>
-              <option v-for="sid in availableForAnySlot(i)" :key="sid" :value="sid">{{ getSkillName(sid) }}</option>
-            </select>
-          </template>
-        </li>
-      </ul>
-    </section>
-
-    <section>
-      <h2 class="text-lg font-semibold text-gray-800 dark:text-gray-100 mt-4">属性（3d6×5）</h2>
-      <button
-        type="button"
-        @click="rollAttrs"
-        class="mt-2 rounded-md bg-amber-600 px-3 py-1.5 text-sm text-white hover:bg-amber-700"
-      >
-        投掷属性
-      </button>
-      <div v-if="attributes" class="mt-2 grid grid-cols-3 gap-2 text-sm">
-        <div v-for="(v, k) in attributes" :key="k" class="capitalize">
-          {{ k }}: <strong>{{ v }}</strong>
+  <div class="min-h-screen flex flex-col">
+    <!-- Progress indicator -->
+    <div class="px-6 pt-8 pb-4 max-w-3xl mx-auto w-full">
+      <div class="flex items-center justify-center gap-2 mb-6">
+        <div class="flex items-center gap-2">
+          <span class="w-7 h-7 rounded-full bg-eldritch-800 border border-eldritch-700/50
+                       flex items-center justify-center text-xs text-eldritch-300">✓</span>
+          <span class="text-xs text-gray-500">选择职业</span>
+        </div>
+        <div class="w-8 h-px bg-eldritch-600" />
+        <div class="flex items-center gap-2">
+          <span class="w-7 h-7 rounded-full bg-eldritch-600 border border-eldritch-500
+                       flex items-center justify-center text-xs font-bold text-parchment-200">2</span>
+          <span class="text-xs font-medium text-parchment-300">技能与属性</span>
+        </div>
+        <div class="w-8 h-px bg-gray-700" />
+        <div class="flex items-center gap-2">
+          <span class="w-7 h-7 rounded-full bg-gray-800 border border-gray-700
+                       flex items-center justify-center text-xs text-gray-500">3</span>
+          <span class="text-xs text-gray-600">进入游戏</span>
         </div>
       </div>
-    </section>
 
-    <section>
-      <h2 class="text-lg font-semibold text-gray-800 dark:text-gray-100 mt-4">兴趣技能（任选 4 项，每项 +20%，可与职业技能重叠叠加）</h2>
-      <ul class="mt-2 space-y-2">
-        <li v-for="(pk, idx) in personalInterestKeys" :key="idx" class="flex items-center gap-2">
-          <select
-            :value="pk"
-            @change="(e) => setPersonalInterest(idx, (e.target as HTMLSelectElement).value)"
-            class="block w-full min-w-[14rem] max-w-md py-2 px-3 min-h-[2.5rem] rounded-md border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-800 text-gray-900 dark:text-gray-100 text-sm focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+      <h1 class="gothic-heading text-2xl font-bold text-center">创建角色</h1>
+      <p class="mt-1 text-center text-sm text-gray-500">
+        职业：<span class="text-parchment-400 font-serif">{{ selectedOccupationName }}</span>
+      </p>
+      <div class="mt-2 mx-auto w-16 h-px bg-gradient-to-r from-transparent via-eldritch-500 to-transparent" />
+    </div>
+
+    <!-- Content -->
+    <div class="flex-1 px-6 pb-12 max-w-3xl mx-auto w-full space-y-8">
+
+      <!-- Occupation Skills -->
+      <section class="gothic-card p-5">
+        <h2 class="gothic-heading text-base font-semibold mb-4 flex items-center gap-2">
+          <span class="text-eldritch-400">⚔</span>
+          职业技能
+          <span class="text-xs font-normal text-gray-500 font-body">(9 项：70, 60, 60, 50, 50, 50, 40, 40, 40)</span>
+        </h2>
+        <div class="space-y-2">
+          <div
+            v-for="(key, i) in occupationSkillKeys"
+            :key="i"
+            class="flex items-center gap-3 py-1.5"
           >
-            <option value="">— 选择 —</option>
-            <option v-for="sid in availableForInterestSlot(idx)" :key="sid" :value="sid">
-              {{ interestSkillLabel(sid) }}
-            </option>
-          </select>
-        </li>
-      </ul>
-    </section>
+            <span class="w-10 text-right text-xs font-mono font-bold shrink-0"
+                  :class="(OCCUPATION_SKILL_VALUES[i] ?? 0) >= 60 ? 'text-parchment-300' : 'text-gray-500'">
+              {{ OCCUPATION_SKILL_VALUES[i] ?? 0 }}%
+            </span>
 
-    <section>
-      <label class="block text-gray-700 dark:text-gray-300 mt-4">调查员姓名</label>
-      <input
-        v-model="playerName"
-        type="text"
-        class="mt-1 rounded border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-800 px-2 py-1 text-gray-900 dark:text-gray-100 w-48"
-        placeholder="调查员"
-      />
-    </section>
+            <!-- Fixed skill -->
+            <span v-if="slotTypes[i] === 'fixed'"
+                  class="text-sm text-parchment-200 font-medium">
+              {{ getSkillName(key) }}
+            </span>
 
-    <div class="flex gap-3 pt-4">
-      <button
-        type="button"
-        @click="router.push('/occupation')"
-        class="rounded-md border border-gray-300 dark:border-gray-600 px-3 py-1.5 text-sm text-gray-700 dark:text-gray-300"
-      >
-        返回选职业
-      </button>
-      <button
-        type="button"
-        @click="confirm"
-        :disabled="!canConfirm()"
-        class="rounded-md bg-blue-600 px-4 py-2 text-sm text-white hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed"
-      >
-        确认角色并进入游戏
-      </button>
+            <!-- Interpersonal selector -->
+            <select v-else-if="slotTypes[i] === 'interpersonal'"
+                    :value="key"
+                    @change="(e) => setSlotSkill(i, (e.target as HTMLSelectElement).value)"
+                    class="gothic-select text-sm min-w-[12rem] max-w-xs py-1.5">
+              <option value="">— 选择人际技能 —</option>
+              <option v-for="sid in availableForInterpersonalSlot(i)" :key="sid" :value="sid">{{ getSkillName(sid) }}</option>
+            </select>
+
+            <!-- Any skill selector -->
+            <select v-else
+                    :value="key"
+                    @change="(e) => setSlotSkill(i, (e.target as HTMLSelectElement).value)"
+                    class="gothic-select text-sm min-w-[12rem] max-w-xs py-1.5">
+              <option value="">— 选择技能 —</option>
+              <option v-for="sid in availableForAnySlot(i)" :key="sid" :value="sid">{{ getSkillName(sid) }}</option>
+            </select>
+          </div>
+        </div>
+      </section>
+
+      <!-- Attributes -->
+      <section class="gothic-card p-5">
+        <h2 class="gothic-heading text-base font-semibold mb-4 flex items-center gap-2">
+          <span class="text-amber-400">🎲</span>
+          属性投掷
+          <span class="text-xs font-normal text-gray-500 font-body">(3d6×5)</span>
+        </h2>
+        <button type="button" @click="rollAttrs"
+                class="gothic-btn text-sm px-5">
+          {{ attributes ? '重新投掷' : '投掷属性' }}
+        </button>
+        <div v-if="attributes"
+             class="mt-4 grid grid-cols-3 gap-3"
+             :class="{ 'animate-fade-in': attrAnimating }">
+          <div v-for="(v, k) in attributes" :key="k"
+               class="flex items-center justify-between px-3 py-2 rounded-lg
+                      bg-gray-800/60 border border-gray-700/50">
+            <span class="text-xs font-bold tracking-wider text-gray-400 uppercase">{{ k }}</span>
+            <span class="font-mono font-bold text-parchment-200">{{ v }}</span>
+          </div>
+        </div>
+      </section>
+
+      <!-- Personal Interest Skills -->
+      <section class="gothic-card p-5">
+        <h2 class="gothic-heading text-base font-semibold mb-4 flex items-center gap-2">
+          <span class="text-cthulhu-300">✦</span>
+          兴趣技能
+          <span class="text-xs font-normal text-gray-500 font-body">(任选 4 项，每项 +20%，可与职业技能重叠叠加)</span>
+        </h2>
+        <div class="space-y-2">
+          <div v-for="(pk, idx) in personalInterestKeys" :key="idx"
+               class="flex items-center gap-3">
+            <span class="w-10 text-right text-xs font-mono text-cthulhu-400 shrink-0">+{{ PERSONAL_INTEREST_BONUS }}%</span>
+            <select :value="pk"
+                    @change="(e) => setPersonalInterest(idx, (e.target as HTMLSelectElement).value)"
+                    class="gothic-select text-sm flex-1 max-w-md py-1.5">
+              <option value="">— 选择 —</option>
+              <option v-for="sid in availableForInterestSlot(idx)" :key="sid" :value="sid">
+                {{ interestSkillLabel(sid) }}
+              </option>
+            </select>
+          </div>
+        </div>
+      </section>
+
+      <!-- Player Name -->
+      <section class="gothic-card p-5">
+        <h2 class="gothic-heading text-base font-semibold mb-3 flex items-center gap-2">
+          <span class="text-parchment-400">✎</span>
+          调查员姓名
+        </h2>
+        <input v-model="playerName" type="text"
+               class="gothic-input max-w-xs text-sm"
+               placeholder="调查员" />
+      </section>
+
+      <!-- Action buttons -->
+      <div class="flex items-center gap-3 pt-2 pb-4">
+        <button type="button"
+                @click="router.push('/occupation')"
+                class="gothic-btn-secondary text-sm">
+          返回选职业
+        </button>
+        <button type="button"
+                @click="confirm"
+                :disabled="!canConfirm()"
+                class="gothic-btn text-sm px-6">
+          确认角色并进入游戏
+        </button>
+      </div>
     </div>
   </div>
 </template>

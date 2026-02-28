@@ -37,4 +37,13 @@ contextBridge.exposeInMainWorld('electronAPI', {
   listSaves: () => ipcRenderer.invoke('save:list'),
   readSave: (saveId) => ipcRenderer.invoke('save:read', saveId),
   writeSave: (saveId, data) => ipcRenderer.invoke('save:write', saveId, data),
+
+  // RAG (integrated vector store — no separate service needed)
+  ragHealth: () => ipcRenderer.invoke('rag:health'),
+  ragIndex: (params) => ipcRenderer.invoke('rag:index', params),
+  ragDelete: (scriptId) => ipcRenderer.invoke('rag:delete', scriptId),
+  ragQuery: (params) => ipcRenderer.invoke('rag:query', params),
+  ragContext: (params) => ipcRenderer.invoke('rag:context', params),
+  ragListStories: () => ipcRenderer.invoke('rag:listStories'),
+  ragStoryOverview: (params) => ipcRenderer.invoke('rag:storyOverview', params),
 });

@@ -1,3 +1,7 @@
+/**
+ * RAG Service — communicates with the integrated Electron vector store via IPC.
+ * No external Python service required.
+ */
 import type { RAGChunk } from '../types/script'
 
 export interface RAGChunkResult {
@@ -6,57 +10,78 @@ export interface RAGChunkResult {
   distance: number
 }
 
-async function getRagBaseUrl(): Promise<string> {
-  const { useSettingsStore } = await import('../stores/settingsStore')
-  const store = useSettingsStore()
-  return store.settings.ragUrl || 'http://localhost:8001'
+export interface IndexedStory {
+  storyId: string
+  name: string
+  chunkCount: number
+  indexedAt: number
 }
 
-async function fetchRag<T>(path: string, options?: RequestInit): Promise<T> {
-  const base = await getRagBaseUrl()
-  const url = base.replace(/\/$/, '') + path
-  const res = await fetch(url, {
-    ...options,
-    headers: { 'Content-Type': 'application/json', ...options?.headers },
-  })
-  if (!res.ok) throw new Error(`RAG: ${res.status} ${await res.text()}`)
-  return res.json()
+type ElectronRagAPI = {
+  ragHealth: () => Promise<{ status: string; service: string }>
+  ragIndex: (params: { scriptId: string; chunks: { id: string; content: string; type: string; metadata: Record<string, unknown> }[]; storyMeta?: { name?: string } }) => Promise<{ ok: boolean; indexed: number }>
+  ragDelete: (scriptId: string) => Promise<{ ok: boolean; deleted: number }>
+  ragQuery: (params: { query: string; scriptId?: string; sceneId?: string; type?: string; topK?: number }) => Promise<{ chunks: RAGChunkResult[] }>
+  ragContext: (params: { query: string; scriptId?: string; sceneId?: string; topK?: number }) => Promise<{ context: string }>
+  ragListStories: () => Promise<IndexedStory[]>
+  ragStoryOverview: (params: { storyId: string; topK?: number }) => Promise<{ overview: string; storyName: string }>
+}
+
+function getApi(): ElectronRagAPI | null {
+  return (window as unknown as { electronAPI?: ElectronRagAPI }).electronAPI ?? null
 }
 
 /** Check if RAG service is available */
 export async function checkRagHealth(): Promise<boolean> {
   try {
-    const base = await getRagBaseUrl()
-    const res = await fetch(`${base.replace(/\/$/, '')}/health`, { method: 'GET' })
-    return res.ok
+    const api = getApi()
+    if (!api?.ragHealth) return false
+    const r = await api.ragHealth()
+    return r?.status === 'ok'
   } catch {
     return false
   }
 }
 
-/** Index script chunks for RAG */
-export async function indexScript(
-  scriptId: string,
-  chunks: RAGChunk[]
+/** Index story chunks for RAG */
+export async function indexStory(
+  storyId: string,
+  chunks: RAGChunk[],
+  storyMeta?: { name?: string },
 ): Promise<{ ok: boolean; indexed: number }> {
-  const body = {
-    scriptId,
+  const api = getApi()
+  if (!api?.ragIndex) throw new Error('RAG service unavailable (Electron API not found)')
+  return api.ragIndex({
+    scriptId: storyId,
     chunks: chunks.map((c) => ({
       id: c.id,
       content: c.content,
       type: c.type,
       metadata: c.metadata,
     })),
-  }
-  return fetchRag('/index', {
-    method: 'POST',
-    body: JSON.stringify(body),
+    storyMeta,
   })
 }
 
-/** Delete script index */
-export async function deleteScriptIndex(scriptId: string): Promise<{ ok: boolean; deleted: number }> {
-  return fetchRag(`/index/${encodeURIComponent(scriptId)}`, { method: 'DELETE' })
+/** Delete story index */
+export async function deleteStoryIndex(storyId: string): Promise<{ ok: boolean; deleted: number }> {
+  const api = getApi()
+  if (!api?.ragDelete) throw new Error('RAG service unavailable')
+  return api.ragDelete(storyId)
+}
+
+/** List all indexed stories */
+export async function listIndexedStories(): Promise<IndexedStory[]> {
+  const api = getApi()
+  if (!api?.ragListStories) return []
+  return api.ragListStories()
+}
+
+/** Get story overview (initial context for game start) */
+export async function getStoryOverview(storyId: string, topK = 15): Promise<{ overview: string; storyName: string }> {
+  const api = getApi()
+  if (!api?.ragStoryOverview) return { overview: '', storyName: storyId }
+  return api.ragStoryOverview({ storyId, topK })
 }
 
 /** Query relevant chunks */
@@ -67,15 +92,14 @@ export async function queryChunks(params: {
   type?: string
   topK?: number
 }): Promise<{ chunks: RAGChunkResult[] }> {
-  return fetchRag('/query', {
-    method: 'POST',
-    body: JSON.stringify({
-      query: params.query,
-      scriptId: params.scriptId,
-      sceneId: params.sceneId,
-      type: params.type,
-      topK: params.topK ?? 5,
-    }),
+  const api = getApi()
+  if (!api?.ragQuery) return { chunks: [] }
+  return api.ragQuery({
+    query: params.query,
+    scriptId: params.scriptId,
+    sceneId: params.sceneId,
+    type: params.type,
+    topK: params.topK ?? 5,
   })
 }
 
@@ -86,13 +110,12 @@ export async function getContext(params: {
   sceneId?: string
   topK?: number
 }): Promise<{ context: string }> {
-  return fetchRag('/context', {
-    method: 'POST',
-    body: JSON.stringify({
-      query: params.query,
-      scriptId: params.scriptId,
-      sceneId: params.sceneId,
-      topK: params.topK ?? 5,
-    }),
+  const api = getApi()
+  if (!api?.ragContext) return { context: '' }
+  return api.ragContext({
+    query: params.query,
+    scriptId: params.scriptId,
+    sceneId: params.sceneId,
+    topK: params.topK ?? 5,
   })
 }

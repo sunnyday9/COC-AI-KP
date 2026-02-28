@@ -45,7 +45,7 @@ export interface COCCharacterSheet {
 }
 
 export type GamePhase =
-  | 'script_selected'   // 已选剧本，未选职业
-  | 'occupation_selected' // 已选职业，未完成角色卡
-  | 'character_ready'    // 角色卡完成，未进入游戏
-  | 'playing'            // 游戏中，AI KP 已启动
+  | 'story_selected'      // 已选故事，未选职业
+  | 'occupation_selected'  // 已选职业，未完成角色卡
+  | 'character_ready'      // 角色卡完成，未进入游戏
+  | 'playing'              // 游戏中，AI KP 已启动

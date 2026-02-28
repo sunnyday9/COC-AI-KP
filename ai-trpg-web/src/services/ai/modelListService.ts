@@ -1,3 +1,5 @@
+import { resolveProtocol, resolveBaseUrl } from './types'
+
 export interface ModelOption {
   value: string
   label: string
@@ -8,61 +10,6 @@ interface FetchContext {
   baseUrl?: string
 }
 
-async function fetchOpenRouterModels(apiKey: string): Promise<ModelOption[]> {
-  const res = await fetch('https://openrouter.ai/api/v1/models', {
-    headers: { Authorization: `Bearer ${apiKey}` },
-  })
-  if (!res.ok) throw new Error(`OpenRouter: ${res.status}`)
-  const data = (await res.json()) as { data?: { id: string; name?: string }[] }
-  const models = data.data ?? []
-  return models.map((m) => ({ value: m.id, label: m.name || m.id })).slice(0, 80)
-}
-
-async function fetchGoogleModels(apiKey: string): Promise<ModelOption[]> {
-  const res = await fetch(
-    `https://generativelanguage.googleapis.com/v1beta/models?key=${apiKey}&pageSize=100`
-  )
-  if (!res.ok) throw new Error(`Google: ${res.status}`)
-  const data = (await res.json()) as {
-    models?: { name: string; displayName?: string; supportedGenerationMethods?: string[] }[]
-  }
-  const models = (data.models ?? []).filter(
-    (m) => m.name && (m.supportedGenerationMethods || []).includes('generateContent')
-  )
-  return models.map((m) => {
-    const id = ((m.name ?? '').replace('models/', '')) || (m.name ?? '')
-    return { value: id, label: m.displayName || id }
-  })
-}
-
-async function fetchOpenAIModels(apiKey: string): Promise<ModelOption[]> {
-  const res = await fetch('https://api.openai.com/v1/models', {
-    headers: { Authorization: `Bearer ${apiKey}` },
-  })
-  if (!res.ok) throw new Error(`OpenAI: ${res.status}`)
-  const data = (await res.json()) as { data?: { id: string }[] }
-  const models = data.data ?? []
-  return models.filter((m) => m.id).map((m) => ({ value: m.id, label: m.id })).slice(0, 80)
-}
-
-async function fetchOllamaModels(baseUrl: string): Promise<ModelOption[]> {
-  const url = baseUrl.replace(/\/$/, '')
-  const res = await fetch(`${url}/api/tags`)
-  if (!res.ok) throw new Error(`Ollama: ${res.status}`)
-  const data = (await res.json()) as { models?: { name: string }[] }
-  const models = data.models ?? []
-  return models.map((m) => ({ value: m.name, label: m.name }))
-}
-
-async function fetchVLLMModels(baseUrl: string): Promise<ModelOption[]> {
-  const url = baseUrl.replace(/\/v1\/?$/, '')
-  const res = await fetch(`${url}/v1/models`)
-  if (!res.ok) throw new Error(`vLLM: ${res.status}`)
-  const data = (await res.json()) as { data?: { id: string }[] }
-  const models = data.data ?? []
-  return models.map((m) => ({ value: m.id, label: m.id }))
-}
-
 export async function getModelOptions(
   provider: string,
   context: FetchContext
@@ -71,30 +18,59 @@ export async function getModelOptions(
   if (api?.aiListModels) {
     return await api.aiListModels({ provider, baseUrl: context.baseUrl, apiKey: context.apiKey })
   }
-  switch (provider) {
-    case 'openrouter':
-      if (context.apiKey) return fetchOpenRouterModels(context.apiKey)
-      return []
-    case 'google':
-      if (context.apiKey) return fetchGoogleModels(context.apiKey)
-      return []
-    case 'openai':
-      if (context.apiKey) return fetchOpenAIModels(context.apiKey)
-      return []
-    case 'ollama':
-      if (context.baseUrl) return fetchOllamaModels(context.baseUrl)
+
+  // Fallback for non-Electron environments
+  const protocol = resolveProtocol(provider as Parameters<typeof resolveProtocol>[0])
+  const baseUrl = resolveBaseUrl(provider as Parameters<typeof resolveBaseUrl>[0], context.baseUrl)
+
+  switch (protocol) {
+    case 'openai_compatible':
+    case 'deepseek_compatible': {
+      const url = baseUrl.replace(/\/$/, '')
+      if (!url) return []
       try {
-        return await fetchOllamaModels('http://localhost:11434')
+        const modelsUrl = url.endsWith('/v1') ? `${url}/models` : `${url}/v1/models`
+        const headers: Record<string, string> = {}
+        if (context.apiKey) headers['Authorization'] = `Bearer ${context.apiKey}`
+        const res = await fetch(modelsUrl, { headers })
+        if (!res.ok) return []
+        const data = (await res.json()) as { data?: { id: string }[] }
+        return (data.data ?? []).filter((m) => m.id).map((m) => ({ value: m.id, label: m.id })).slice(0, 100)
       } catch {
         return []
       }
-    case 'vllm':
-      if (context.baseUrl) return fetchVLLMModels(context.baseUrl)
+    }
+
+    case 'anthropic_compatible':
+      return [
+        { value: 'claude-sonnet-4-20250514', label: 'Claude Sonnet 4' },
+        { value: 'claude-3-7-sonnet-20250219', label: 'Claude 3.7 Sonnet' },
+        { value: 'claude-3-5-sonnet-20241022', label: 'Claude 3.5 Sonnet' },
+        { value: 'claude-3-5-haiku-20241022', label: 'Claude 3.5 Haiku' },
+        { value: 'claude-3-opus-20240229', label: 'Claude 3 Opus' },
+        { value: 'claude-3-haiku-20240307', label: 'Claude 3 Haiku' },
+      ]
+
+    case 'google_compatible': {
+      if (!context.apiKey) return []
+      const base = (baseUrl || 'https://generativelanguage.googleapis.com').replace(/\/$/, '')
       try {
-        return await fetchVLLMModels('http://localhost:8000/v1')
+        const res = await fetch(`${base}/v1beta/models?key=${context.apiKey}&pageSize=100`)
+        if (!res.ok) return []
+        const data = (await res.json()) as {
+          models?: { name: string; displayName?: string; supportedGenerationMethods?: string[] }[]
+        }
+        return (data.models ?? [])
+          .filter((m) => m.name && (m.supportedGenerationMethods || []).includes('generateContent'))
+          .map((m) => {
+            const id = (m.name ?? '').replace('models/', '') || (m.name ?? '')
+            return { value: id, label: m.displayName || id }
+          })
       } catch {
         return []
       }
+    }
+
     default:
       return []
   }

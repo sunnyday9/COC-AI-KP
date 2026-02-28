@@ -4,40 +4,38 @@ const { readSettings } = require('./settingsHandlers.cjs')
 
 const API_KEY_PLACEHOLDER = '***'
 
+/* ═══════════════════ COC KP Tool Definitions ═══════════════════ */
+
 const COC_KP_TOOLS = [
   {
     type: 'function',
     function: {
-      name: 'adjust_hp',
-      description: 'Adjust player HP when they take damage or heal. Use negative delta for damage, positive for healing.',
+      name: 'skill_check',
+      description: 'Perform a COC 7th skill check. Rolls d100 against the skill value at the given difficulty. Returns the roll, threshold, and result (critical_success/extreme_success/hard_success/regular_success/failure/fumble). Use this for all skill checks (perception, combat, social, etc.).',
       parameters: {
         type: 'object',
-        properties: { delta: { type: 'integer', description: 'Change amount (e.g. -3 for 3 damage)' } },
-        required: ['delta'],
+        properties: {
+          skillName: { type: 'string', description: 'Name of the skill being checked (e.g. "侦查", "格斗", "说服")' },
+          skillValue: { type: 'integer', description: 'The investigator\'s skill value (0-99)' },
+          difficulty: { type: 'string', enum: ['regular', 'hard', 'extreme'], description: 'Difficulty level. regular=skill value, hard=skill/2, extreme=skill/5' },
+        },
+        required: ['skillName', 'skillValue', 'difficulty'],
       },
     },
   },
   {
     type: 'function',
     function: {
-      name: 'adjust_san',
-      description: 'Adjust player SAN (sanity) when they lose or recover sanity. Use negative delta for sanity loss, positive for recovery.',
+      name: 'san_check',
+      description: 'Perform a COC 7th sanity check. Rolls d100 against current SAN value, then rolls the appropriate loss. Returns the roll, whether it passed, and the SAN lost. Call this when the investigator encounters something horrifying or supernatural.',
       parameters: {
         type: 'object',
-        properties: { delta: { type: 'integer', description: 'Change amount (e.g. -1d3 for sanity loss)' } },
-        required: ['delta'],
-      },
-    },
-  },
-  {
-    type: 'function',
-    function: {
-      name: 'adjust_mp',
-      description: 'Adjust player MP when they use or recover magic points.',
-      parameters: {
-        type: 'object',
-        properties: { delta: { type: 'integer', description: 'Change amount (negative for spending)' } },
-        required: ['delta'],
+        properties: {
+          currentSan: { type: 'integer', description: 'Investigator\'s current SAN value' },
+          successLoss: { type: 'string', description: 'SAN loss on success (e.g. "0", "1", "1d3")' },
+          failureLoss: { type: 'string', description: 'SAN loss on failure (e.g. "1d6", "2d6", "1d10")' },
+        },
+        required: ['currentSan', 'successLoss', 'failureLoss'],
       },
     },
   },
@@ -45,11 +43,11 @@ const COC_KP_TOOLS = [
     type: 'function',
     function: {
       name: 'roll_dice',
-      description: 'Roll dice to get a random result. Call this every time you need to resolve a dice roll (e.g. d100 skill check, d6 damage). Each call returns a new independent result.',
+      description: 'Roll dice to get a random result. Use for damage rolls, random events, etc. For skill checks, prefer skill_check tool instead. Each call returns a new independent random number.',
       parameters: {
         type: 'object',
         properties: {
-          sides: { type: 'integer', description: 'Number of sides (e.g. 100 for d100, 6 for d6). Default 100 for COC.' },
+          sides: { type: 'integer', description: 'Number of sides (e.g. 6 for d6 damage, 10 for d10). Default 100.' },
         },
         required: [],
       },
@@ -58,14 +56,50 @@ const COC_KP_TOOLS = [
   {
     type: 'function',
     function: {
+      name: 'adjust_hp',
+      description: 'Adjust investigator HP. Use negative delta for damage (after armor), positive for healing.',
+      parameters: {
+        type: 'object',
+        properties: { delta: { type: 'integer', description: 'HP change (e.g. -3 for 3 damage, +2 for healing)' } },
+        required: ['delta'],
+      },
+    },
+  },
+  {
+    type: 'function',
+    function: {
+      name: 'adjust_san',
+      description: 'Adjust investigator SAN after a san_check result. Use the loss value returned by san_check as negative delta.',
+      parameters: {
+        type: 'object',
+        properties: { delta: { type: 'integer', description: 'SAN change (e.g. -4 for 4 sanity loss)' } },
+        required: ['delta'],
+      },
+    },
+  },
+  {
+    type: 'function',
+    function: {
+      name: 'adjust_mp',
+      description: 'Adjust investigator MP when they cast spells or recover magic points.',
+      parameters: {
+        type: 'object',
+        properties: { delta: { type: 'integer', description: 'MP change (negative for spending)' } },
+        required: ['delta'],
+      },
+    },
+  },
+  {
+    type: 'function',
+    function: {
       name: 'transition_scene',
-      description: 'Transition to a new scene when the player moves to a different location or the story progresses. Use this when the player enters a new area, completes an objective, or when a scene change is narratively appropriate.',
+      description: 'Record a scene transition when the investigator moves to a new location mentioned in the story. Use the scene/location name from the story text.',
       parameters: {
         type: 'object',
         properties: {
-          sceneId: { type: 'string', description: 'The scene ID from the script (e.g. "scene_001", "scene_002")' },
+          sceneName: { type: 'string', description: 'The name of the scene/location (e.g. "昏暗的酒吧", "图书馆二楼")' },
         },
-        required: ['sceneId'],
+        required: ['sceneName'],
       },
     },
   },
@@ -73,25 +107,31 @@ const COC_KP_TOOLS = [
     type: 'function',
     function: {
       name: 'grant_clue',
-      description: 'Grant a clue to the player when they discover or learn something important. Use this when the player successfully investigates, finds evidence, or learns key information that advances the investigation.',
+      description: 'Grant a clue to the investigator when they discover important information. Use for obvious clues (no check needed) or after a successful investigation. Describe the clue in natural language.',
       parameters: {
         type: 'object',
         properties: {
-          clueId: { type: 'string', description: 'The clue ID from the script (e.g. "clue_001", "clue_002")' },
+          description: { type: 'string', description: 'Natural language description of the clue (e.g. "日记本中记载了1923年的神秘仪式")' },
         },
-        required: ['clueId'],
+        required: ['description'],
       },
     },
   },
 ]
 
-async function doOpenAICompat(config, messages, stream, temp, maxTokens, tools = null) {
+/* ═══════════════════ Provider: OpenAI Compatible ═══════════════════ */
+
+async function doOpenAICompat(config, messages, stream, temp, maxTokens, tools, onChunk) {
   const model = config.model
-  if (!model) throw new Error('请先在设置中刷新模型列表并选择模型')
+  if (!model) throw new Error('请先在设置中选择或输入模型名称')
+  const baseURL = (config.baseUrl || '').replace(/\/$/, '')
+  if (!baseURL) throw new Error('请在设置中填写 Base URL')
+
   const client = new OpenAI({
-    baseURL: config.baseUrl?.replace(/\/$/, '') || 'http://localhost:8000/v1',
+    baseURL,
     apiKey: config.apiKey || 'not-needed',
   })
+
   const opts = {
     model,
     messages,
@@ -103,69 +143,254 @@ async function doOpenAICompat(config, messages, stream, temp, maxTokens, tools =
     opts.tools = tools
     opts.tool_choice = 'auto'
   }
+
   const res = await client.chat.completions.create(opts)
-  return res
+
+  if (stream) {
+    let fullText = ''
+    const toolCallsByIndex = new Map()
+    for await (const chunk of res) {
+      const choice = chunk.choices?.[0]
+      const delta = choice?.delta?.content
+      if (delta) {
+        fullText += delta
+        if (onChunk) onChunk(delta)
+      }
+      const tcs = choice?.delta?.tool_calls
+      if (Array.isArray(tcs)) {
+        for (const tc of tcs) {
+          const idx = tc.index ?? 0
+          const prev = toolCallsByIndex.get(idx) ?? { id: tc.id, name: '', arguments: '' }
+          toolCallsByIndex.set(idx, {
+            id: tc.id ?? prev.id,
+            name: tc.function?.name ?? prev.name,
+            arguments: (prev.arguments ?? '') + (tc.function?.arguments ?? ''),
+          })
+        }
+      }
+    }
+    const toolCalls = [...toolCallsByIndex.values()].map((tc, idx) => ({
+      id: tc.id ?? `tc_${idx}`,
+      name: tc.name ?? '',
+      arguments: tc.arguments?.trim() ? tc.arguments : '{}',
+    }))
+    return {
+      stream: false,
+      content: fullText,
+      toolCalls: toolCalls.length > 0 ? toolCalls : undefined,
+    }
+  }
+
+  const msg = res.choices?.[0]?.message ?? {}
+  const toolCalls = (msg.tool_calls || []).map((tc) => ({
+    id: tc.id,
+    name: tc.function?.name ?? '',
+    arguments: tc.function?.arguments ?? '{}',
+  }))
+  return {
+    stream: false,
+    content: msg.content ?? '',
+    toolCalls: toolCalls.length > 0 ? toolCalls : undefined,
+  }
 }
 
-/** Convert OpenAI-format messages to Ollama format (tool_name instead of tool_call_id) */
-function toOllamaMessages(messages, toolCallIdToName = new Map()) {
-  return messages.map((m) => {
-    if (m.role === 'assistant' && m.tool_calls?.length) {
-      const toolCalls = m.tool_calls.map((tc, idx) => ({
-        type: 'function',
-        function: {
-          index: idx,
-          name: tc.function?.name ?? '',
-          arguments: typeof tc.function?.arguments === 'string'
-            ? (() => { try { return JSON.parse(tc.function.arguments) } catch { return {} } })()
-            : (tc.function?.arguments ?? {}),
-        },
-      }))
-      return { role: 'assistant', content: m.content ?? '', tool_calls: toolCalls }
+/* ═══════════════════ Provider: Anthropic Compatible ═══════════════════ */
+
+function toAnthropicTools(openaiTools) {
+  if (!openaiTools?.length) return undefined
+  return openaiTools.map((t) => {
+    const fn = t.function
+    if (!fn) return null
+    return {
+      name: fn.name,
+      description: fn.description ?? '',
+      input_schema: fn.parameters ?? { type: 'object', properties: {} },
     }
-    if (m.role === 'tool') {
-      const name = toolCallIdToName.get(m.tool_call_id) ?? m.tool_call_id
-      return { role: 'tool', tool_name: name, content: m.content ?? '' }
-    }
-    return { role: m.role, content: m.content ?? '' }
-  })
+  }).filter(Boolean)
 }
 
-/** Build tool_call_id -> name map from assistant message */
-function buildToolCallIdMap(messages) {
-  const map = new Map()
+function toAnthropicMessages(messages) {
+  const system = []
+  const raw = []
+
   for (const m of messages) {
-    if (m.role === 'assistant' && m.tool_calls?.length) {
-      for (const tc of m.tool_calls) {
-        if (tc.id && tc.function?.name) map.set(tc.id, tc.function.name)
+    if (m.role === 'system') {
+      system.push(m.content || '')
+      continue
+    }
+    if (m.role === 'user') {
+      raw.push({ role: 'user', content: m.content || '' })
+    } else if (m.role === 'assistant') {
+      const blocks = []
+      if (m.content) blocks.push({ type: 'text', text: m.content })
+      if (m.tool_calls?.length) {
+        for (const tc of m.tool_calls) {
+          let input = {}
+          try { input = typeof tc.function?.arguments === 'string' ? JSON.parse(tc.function.arguments) : (tc.function?.arguments ?? {}) } catch (_e) { /* ignore */ }
+          blocks.push({
+            type: 'tool_use',
+            id: tc.id || `tc_${Date.now()}`,
+            name: tc.function?.name ?? '',
+            input,
+          })
+        }
+      }
+      if (blocks.length > 0) raw.push({ role: 'assistant', content: blocks })
+    } else if (m.role === 'tool') {
+      const last = raw[raw.length - 1]
+      const result = {
+        type: 'tool_result',
+        tool_use_id: m.tool_call_id || '',
+        content: m.content || '',
+      }
+      if (last && last.role === 'user' && Array.isArray(last.content)) {
+        last.content.push(result)
+      } else {
+        raw.push({ role: 'user', content: [result] })
       }
     }
   }
-  return map
+
+  const msgs = []
+  for (const m of raw) {
+    const prev = msgs[msgs.length - 1]
+    if (prev && prev.role === m.role) {
+      const prevBlocks = Array.isArray(prev.content) ? prev.content : [{ type: 'text', text: prev.content || '' }]
+      const curBlocks = Array.isArray(m.content) ? m.content : [{ type: 'text', text: m.content || '' }]
+      prev.content = prevBlocks.concat(curBlocks)
+    } else {
+      msgs.push({ ...m })
+    }
+  }
+
+  if (msgs.length > 0 && msgs[0].role !== 'user') {
+    msgs.unshift({ role: 'user', content: '（继续）' })
+  }
+
+  return { system: system.join('\n\n'), messages: msgs }
 }
 
-async function doOllama(config, messages, stream, temp, maxTokens, tools = null) {
-  const baseUrl = config.baseUrl?.replace(/\/$/, '') || 'http://localhost:11434'
+async function doAnthropic(config, messages, stream, temp, maxTokens, tools, onChunk) {
   const model = config.model
-  if (!model) throw new Error('请先在设置中刷新模型列表并选择模型')
-  const toolCallIdMap = buildToolCallIdMap(messages)
-  const ollamaMessages = toOllamaMessages(messages, toolCallIdMap)
+  if (!model) throw new Error('请先在设置中选择或输入模型名称')
+  const baseURL = (config.baseUrl || 'https://api.anthropic.com').replace(/\/$/, '')
+  const apiKey = config.apiKey
+  if (!apiKey) throw new Error('Anthropic 需要 API Key')
+
+  const { system, messages: anthropicMsgs } = toAnthropicMessages(messages)
+  const anthropicTools = toAnthropicTools(tools)
+
   const body = {
     model,
-    messages: ollamaMessages,
+    messages: anthropicMsgs,
+    max_tokens: maxTokens ?? 2048,
+    temperature: temp ?? 0.7,
     stream: !!stream,
   }
-  if (tools && tools.length > 0) body.tools = tools
-  const res = await fetch(`${baseUrl}/api/chat`, {
+  if (system) body.system = system
+  if (anthropicTools?.length) body.tools = anthropicTools
+
+  const res = await fetch(`${baseURL}/v1/messages`, {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
+    headers: {
+      'Content-Type': 'application/json',
+      'x-api-key': apiKey,
+      'anthropic-version': '2023-06-01',
+    },
     body: JSON.stringify(body),
   })
-  if (!res.ok) throw new Error(`Ollama: ${res.status} ${await res.text()}`)
-  return res
+
+  if (!res.ok) {
+    const errText = await res.text()
+    throw new Error(`Anthropic: ${res.status} ${errText}`)
+  }
+
+  if (stream) {
+    let fullText = ''
+    const toolBlocks = []
+    let currentToolId = ''
+    let currentToolName = ''
+    let currentToolInput = ''
+
+    const reader = res.body.getReader()
+    const decoder = new TextDecoder()
+    let buffer = ''
+
+    while (true) {
+      const { done, value } = await reader.read()
+      if (done) break
+      buffer += decoder.decode(value, { stream: true })
+      const lines = buffer.split('\n')
+      buffer = lines.pop() || ''
+
+      for (const line of lines) {
+        if (!line.startsWith('data: ')) continue
+        const raw = line.slice(6).trim()
+        if (raw === '[DONE]') continue
+        let evt
+        try { evt = JSON.parse(raw) } catch (_e) { continue }
+
+        if (evt.type === 'content_block_start') {
+          const block = evt.content_block || {}
+          if (block.type === 'tool_use') {
+            currentToolId = block.id || ''
+            currentToolName = block.name || ''
+            currentToolInput = ''
+          }
+        } else if (evt.type === 'content_block_delta') {
+          const delta = evt.delta || {}
+          if (delta.type === 'text_delta' && delta.text) {
+            fullText += delta.text
+            if (onChunk) onChunk(delta.text)
+          } else if (delta.type === 'input_json_delta' && delta.partial_json) {
+            currentToolInput += delta.partial_json
+          }
+        } else if (evt.type === 'content_block_stop') {
+          if (currentToolName) {
+            let parsedInput = {}
+            try { parsedInput = JSON.parse(currentToolInput) } catch (_e) { /* ignore */ }
+            toolBlocks.push({
+              id: currentToolId,
+              name: currentToolName,
+              arguments: JSON.stringify(parsedInput),
+            })
+            currentToolId = ''
+            currentToolName = ''
+            currentToolInput = ''
+          }
+        }
+      }
+    }
+
+    return {
+      stream: false,
+      content: fullText,
+      toolCalls: toolBlocks.length > 0 ? toolBlocks : undefined,
+    }
+  }
+
+  const data = await res.json()
+  let text = ''
+  const toolCalls = []
+  for (const block of (data.content || [])) {
+    if (block.type === 'text') text += block.text || ''
+    if (block.type === 'tool_use') {
+      toolCalls.push({
+        id: block.id || `tc_${toolCalls.length}`,
+        name: block.name || '',
+        arguments: JSON.stringify(block.input || {}),
+      })
+    }
+  }
+  return {
+    stream: false,
+    content: text,
+    toolCalls: toolCalls.length > 0 ? toolCalls : undefined,
+  }
 }
 
-/** Convert COC_KP_TOOLS to Gemini functionDeclarations format */
+/* ═══════════════════ Provider: Google Compatible ═══════════════════ */
+
 function toGeminiTools(openaiTools) {
   if (!openaiTools?.length) return null
   const declarations = openaiTools.map((t) => {
@@ -192,12 +417,15 @@ function toGeminiTools(openaiTools) {
   return declarations.length ? [{ functionDeclarations: declarations }] : null
 }
 
-async function doGoogle(config, messages, stream, temp, maxTokens, tools = null) {
+async function doGoogle(config, messages, stream, temp, maxTokens, tools, onChunk) {
   const apiKey = config.apiKey
-  if (!apiKey) throw new Error('Google API requires apiKey')
+  if (!apiKey) throw new Error('Google API 需要 API Key')
   let model = (config.model || '').trim()
-  if (!model) throw new Error('请先在设置中刷新模型列表并选择模型')
+  if (!model) throw new Error('请先在设置中选择或输入模型名称')
   model = model.replace(/^models\//, '')
+
+  const baseURL = (config.baseUrl || 'https://generativelanguage.googleapis.com').replace(/\/$/, '')
+
   const systemMsg = messages.find((m) => m.role === 'system')
   const other = messages.filter((m) => m.role !== 'system')
   const contents = []
@@ -212,7 +440,7 @@ async function doGoogle(config, messages, stream, temp, maxTokens, tools = null)
             functionCall: {
               name: tc.function?.name ?? '',
               args: typeof tc.function?.arguments === 'string'
-                ? (() => { try { return JSON.parse(tc.function.arguments) } catch { return {} } })()
+                ? (() => { try { return JSON.parse(tc.function.arguments) } catch (_e) { return {} } })()
                 : (tc.function?.arguments ?? {}),
             },
           }],
@@ -240,6 +468,7 @@ async function doGoogle(config, messages, stream, temp, maxTokens, tools = null)
       pendingToolNames = []
     }
   }
+
   const body = {
     contents,
     generationConfig: {
@@ -252,21 +481,117 @@ async function doGoogle(config, messages, stream, temp, maxTokens, tools = null)
   }
   const geminiTools = toGeminiTools(tools)
   if (geminiTools) body.tools = geminiTools
-  const url = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent${stream ? 'Stream' : ''}?key=${apiKey}`
+
+  const endpoint = stream ? 'streamGenerateContent' : 'generateContent'
+  const altParam = stream ? '&alt=sse' : ''
+  const url = `${baseURL}/v1beta/models/${model}:${endpoint}?key=${apiKey}${altParam}`
+
   const res = await fetch(url, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(body),
   })
+
   if (!res.ok) {
     const text = await res.text()
     const msg = res.status === 404
-      ? `Google: 404 模型不存在或已下线，请到设置中刷新模型列表并重新选择 (当前: ${model})`
+      ? `Google: 404 模型不存在或已下线 (当前: ${model})`
       : `Google: ${res.status} ${text}`
     throw new Error(msg)
   }
-  return res
+
+  if (stream) {
+    let fullText = ''
+    const geminiToolCalls = []
+    const reader = res.body.getReader()
+    const decoder = new TextDecoder()
+    let sseBuffer = ''
+
+    while (true) {
+      const { done, value } = await reader.read()
+      if (done) break
+      sseBuffer += decoder.decode(value, { stream: true })
+      const lines = sseBuffer.split('\n')
+      sseBuffer = lines.pop() || ''
+
+      for (const line of lines) {
+        if (!line.startsWith('data: ')) continue
+        const raw = line.slice(6).trim()
+        if (!raw || raw === '[DONE]') continue
+        let obj
+        try { obj = JSON.parse(raw) } catch (_e) { continue }
+        const parts = obj.candidates?.[0]?.content?.parts ?? []
+        for (const part of parts) {
+          if (part.text) {
+            fullText += part.text
+            if (onChunk) onChunk(part.text)
+          }
+          if (part.functionCall) {
+            geminiToolCalls.push({
+              id: `gemini_tc_${geminiToolCalls.length}`,
+              name: part.functionCall.name ?? '',
+              arguments: JSON.stringify(part.functionCall.args ?? {}),
+            })
+          }
+        }
+      }
+    }
+
+    return {
+      stream: false,
+      content: fullText,
+      toolCalls: geminiToolCalls.length > 0 ? geminiToolCalls : undefined,
+    }
+  }
+
+  const data = await res.json()
+  const parts = data.candidates?.[0]?.content?.parts ?? []
+  let text = ''
+  const geminiToolCalls = []
+  for (const part of parts) {
+    if (part.text) text += part.text
+    if (part.functionCall) {
+      geminiToolCalls.push({
+        id: `gemini_tc_${geminiToolCalls.length}`,
+        name: part.functionCall.name ?? '',
+        arguments: JSON.stringify(part.functionCall.args ?? {}),
+      })
+    }
+  }
+  return {
+    stream: false,
+    content: text,
+    toolCalls: geminiToolCalls.length > 0 ? geminiToolCalls : undefined,
+  }
 }
+
+/* ═══════════════════ Provider → Protocol Resolver ═══════════════════ */
+
+const PROVIDER_MAP = {
+  // Preset providers
+  openai:     { protocol: 'openai_compatible',    defaultBaseUrl: 'https://api.openai.com/v1' },
+  openrouter: { protocol: 'openai_compatible',    defaultBaseUrl: 'https://openrouter.ai/api/v1' },
+  deepseek:   { protocol: 'openai_compatible',    defaultBaseUrl: 'https://api.deepseek.com/v1' },
+  gemini:     { protocol: 'google_compatible',    defaultBaseUrl: 'https://generativelanguage.googleapis.com' },
+  vllm:       { protocol: 'openai_compatible',    defaultBaseUrl: 'http://localhost:8000/v1' },
+  ollama:     { protocol: 'openai_compatible',    defaultBaseUrl: 'http://localhost:11434/v1' },
+  // Custom compatible providers
+  openai_compatible:    { protocol: 'openai_compatible',    defaultBaseUrl: '' },
+  anthropic_compatible: { protocol: 'anthropic_compatible', defaultBaseUrl: 'https://api.anthropic.com' },
+  google_compatible:    { protocol: 'google_compatible',    defaultBaseUrl: 'https://generativelanguage.googleapis.com' },
+  deepseek_compatible:  { protocol: 'openai_compatible',    defaultBaseUrl: 'https://api.deepseek.com/v1' },
+}
+
+function resolveProvider(providerName, userBaseUrl) {
+  const entry = PROVIDER_MAP[providerName]
+  if (!entry) throw new Error(`Unknown provider: ${providerName}. 请在设置中选择正确的提供商。`)
+  return {
+    protocol: entry.protocol,
+    baseUrl: userBaseUrl || entry.defaultBaseUrl,
+  }
+}
+
+/* ═══════════════════ Unified invokeChat ═══════════════════ */
 
 async function invokeChat(params) {
   const { provider, model, baseUrl, apiKey: paramApiKey, messages, temperature, maxTokens, stream } = params
@@ -276,251 +601,105 @@ async function invokeChat(params) {
   const apiKey = (paramApiKey && paramApiKey !== API_KEY_PLACEHOLDER ? paramApiKey : null) ||
     (ai.apiKey && ai.apiKey !== API_KEY_PLACEHOLDER ? ai.apiKey : null) || undefined
 
+  const p = provider || ai.provider
+  if (!p) throw new Error('请先在设置中配置 AI 提供商')
+
+  const { protocol, baseUrl: resolvedBaseUrl } = resolveProvider(p, baseUrl || ai.baseUrl)
+
   const config = {
-    provider: provider || ai.provider,
+    provider: p,
     model: model || ai.model,
-    baseUrl: baseUrl || ai.baseUrl,
+    baseUrl: resolvedBaseUrl,
     apiKey,
     temperature: temperature ?? ai.temperature ?? 0.7,
     maxTokens: maxTokens ?? ai.maxTokens ?? 2048,
   }
 
-  const p = config.provider
-  if (!p) throw new Error('请先在设置中配置 AI Provider 并选择模型')
   const temp = config.temperature
   const max = config.maxTokens
-  if (p === 'openai') config.baseUrl = config.baseUrl || 'https://api.openai.com/v1'
-  if (p === 'openrouter') config.baseUrl = 'https://openrouter.ai/api/v1'
 
-  if (p === 'vllm' || p === 'openai' || p === 'openrouter') {
-    const res = await doOpenAICompat(config, messages, stream, temp, max, params.tools)
-    if (stream) {
-      const chunks = []
-      let fullText = ''
-      // OpenAI streaming tool_calls are delivered in delta.tool_calls
-      const toolCallsByIndex = new Map()
-      for await (const chunk of res) {
-        const choice = chunk.choices?.[0]
-        const delta = choice?.delta?.content
-        if (delta) {
-          fullText += delta
-          if (onChunk) onChunk(delta)
-          else chunks.push(delta)
-        }
-        const tcs = choice?.delta?.tool_calls
-        if (Array.isArray(tcs)) {
-          for (const tc of tcs) {
-            const idx = tc.index ?? 0
-            const prev = toolCallsByIndex.get(idx) ?? { id: tc.id, name: '', arguments: '' }
-            const next = {
-              id: tc.id ?? prev.id,
-              name: tc.function?.name ?? prev.name,
-              arguments: (prev.arguments ?? '') + (tc.function?.arguments ?? ''),
-            }
-            toolCallsByIndex.set(idx, next)
-          }
-        }
-      }
-      // If caller supplied onChunk, return final assembled result instead of chunks
-      if (onChunk) {
-        const toolCalls = [...toolCallsByIndex.values()].map((tc, idx) => ({
-          id: tc.id ?? `openai_tc_${idx}`,
-          name: tc.name ?? '',
-          arguments: tc.arguments?.trim() ? tc.arguments : '{}',
-        }))
-        return {
-          stream: false,
-          content: fullText,
-          toolCalls: toolCalls.length > 0 ? toolCalls : undefined,
-        }
-      }
-      return { stream: true, chunks }
-    }
-    const msg = res.choices?.[0]?.message ?? {}
-    const text = msg.content ?? ''
-    const toolCalls = msg.tool_calls?.map((tc) => ({
-      id: tc.id,
-      name: tc.function?.name ?? '',
-      arguments: tc.function?.arguments ?? '{}',
-    })) ?? []
-    return { stream: false, content: text, toolCalls: toolCalls.length > 0 ? toolCalls : undefined }
+  if (protocol === 'openai_compatible') {
+    return doOpenAICompat(config, messages, stream, temp, max, params.tools, onChunk)
+  }
+  if (protocol === 'anthropic_compatible') {
+    return doAnthropic(config, messages, stream, temp, max, params.tools, onChunk)
+  }
+  if (protocol === 'google_compatible') {
+    return doGoogle(config, messages, stream, temp, max, params.tools, onChunk)
   }
 
-  if (p === 'ollama') {
-    const res = await doOllama(config, messages, stream, temp, max, params.tools)
-    if (stream) {
-      const chunks = []
-      const reader = res.body.getReader()
-      const decoder = new TextDecoder()
-      let buffer = ''
-      while (true) {
-        const { done, value } = await reader.read()
-        if (done) break
-        buffer += decoder.decode(value, { stream: true })
-        const lines = buffer.split('\n')
-        buffer = lines.pop() || ''
-        for (const line of lines) {
-          if (line.startsWith('data: ')) {
-            try {
-              const obj = JSON.parse(line.slice(6))
-              const c = obj.message?.content
-              if (c) chunks.push(c)
-            } catch {}
-          }
-        }
-      }
-      return { stream: true, chunks }
-    }
-    const data = await res.json()
-    const msg = data.message ?? {}
-    const text = msg.content ?? ''
-    const rawToolCalls = msg.tool_calls ?? []
-    const toolCalls = rawToolCalls.map((tc, idx) => ({
-      id: tc.id ?? `ollama_tc_${idx}`,
-      name: tc.function?.name ?? '',
-      arguments: typeof tc.function?.arguments === 'object'
-        ? JSON.stringify(tc.function.arguments ?? {})
-        : (tc.function?.arguments ?? '{}'),
-    }))
-    return {
-      stream: false,
-      content: text,
-      toolCalls: toolCalls.length > 0 ? toolCalls : undefined,
-    }
-  }
-
-  if (p === 'google') {
-    const res = await doGoogle(config, messages, stream, temp, max, params.tools)
-    if (stream) {
-      const chunks = []
-      const reader = res.body.getReader()
-      const decoder = new TextDecoder()
-      let buffer = ''
-      while (true) {
-        const { done, value } = await reader.read()
-        if (done) break
-        buffer += decoder.decode(value, { stream: true })
-        const lines = buffer.split('\n')
-        buffer = lines.pop() || ''
-        for (const line of lines) {
-          if (line.startsWith('data: ')) {
-            try {
-              const obj = JSON.parse(line.slice(6))
-              const text = obj.candidates?.[0]?.content?.parts?.[0]?.text
-              if (text) chunks.push(text)
-            } catch {}
-          }
-        }
-      }
-      return { stream: true, chunks }
-    }
-    const data = await res.json()
-    const parts = data.candidates?.[0]?.content?.parts ?? []
-    let text = ''
-    const geminiToolCalls = []
-    for (const part of parts) {
-      if (part.text) text += part.text
-      if (part.functionCall) {
-        geminiToolCalls.push({
-          id: `gemini_tc_${geminiToolCalls.length}`,
-          name: part.functionCall.name ?? '',
-          arguments: JSON.stringify(part.functionCall.args ?? {}),
-        })
-      }
-    }
-    return {
-      stream: false,
-      content: text,
-      toolCalls: geminiToolCalls.length > 0 ? geminiToolCalls : undefined,
-    }
-  }
-
-  throw new Error(`Unknown provider: ${p}`)
+  throw new Error(`Unknown protocol: ${protocol}`)
 }
+
+/* ═══════════════════ Model Listing ═══════════════════ */
+
+async function listModels(params) {
+  const { provider, baseUrl: paramBaseUrl, apiKey: paramApiKey } = params || {}
+  const settings = await readSettings()
+  const ai = settings?.ai || {}
+  const apiKey = (paramApiKey && paramApiKey !== '***' ? paramApiKey : null) ||
+    (ai.apiKey && ai.apiKey !== '***' ? ai.apiKey : null) || undefined
+
+  const p = provider || ai.provider
+  if (!p) return []
+
+  const { protocol, baseUrl: resolvedBaseUrl } = resolveProvider(p, paramBaseUrl || ai.baseUrl)
+
+  if (protocol === 'openai_compatible') {
+    const url = resolvedBaseUrl.replace(/\/$/, '')
+    if (!url) return []
+    try {
+      const modelsUrl = url.endsWith('/v1') ? `${url}/models` : `${url}/v1/models`
+      const headers = {}
+      if (apiKey) headers['Authorization'] = `Bearer ${apiKey}`
+      const res = await fetch(modelsUrl, { headers })
+      if (!res.ok) return []
+      const data = await res.json()
+      return (data.data || []).filter((m) => m.id).map((m) => ({ value: m.id, label: m.id })).slice(0, 100)
+    } catch (_e) {
+      return []
+    }
+  }
+
+  if (protocol === 'anthropic_compatible') {
+    return [
+      { value: 'claude-sonnet-4-20250514', label: 'Claude Sonnet 4' },
+      { value: 'claude-3-7-sonnet-20250219', label: 'Claude 3.7 Sonnet' },
+      { value: 'claude-3-5-sonnet-20241022', label: 'Claude 3.5 Sonnet' },
+      { value: 'claude-3-5-haiku-20241022', label: 'Claude 3.5 Haiku' },
+      { value: 'claude-3-opus-20240229', label: 'Claude 3 Opus' },
+      { value: 'claude-3-haiku-20240307', label: 'Claude 3 Haiku' },
+    ]
+  }
+
+  if (protocol === 'google_compatible') {
+    if (!apiKey) return []
+    const baseURL = resolvedBaseUrl.replace(/\/$/, '') || 'https://generativelanguage.googleapis.com'
+    try {
+      const res = await fetch(
+        `${baseURL}/v1beta/models?key=${apiKey}&pageSize=100`
+      )
+      if (!res.ok) return []
+      const data = await res.json()
+      return (data.models || [])
+        .filter((m) => m.name && (m.supportedGenerationMethods || []).includes('generateContent'))
+        .map((m) => {
+          const id = (m.name || '').replace('models/', '') || m.name || ''
+          return { value: id, label: m.displayName || id }
+        })
+    } catch (_e) {
+      return []
+    }
+  }
+
+  return []
+}
+
+/* ═══════════════════ IPC Registration ═══════════════════ */
 
 function registerAIHandlers() {
   ipcMain.handle('ai:chat', async (_, params) => invokeChat(params))
-
-  ipcMain.handle('ai:listModels', async (_, params) => {
-    const { provider, baseUrl: paramBaseUrl, apiKey: paramApiKey } = params || {}
-    const settings = await readSettings()
-    const ai = settings?.ai || {}
-    const apiKey = (paramApiKey && paramApiKey !== '***' ? paramApiKey : null) ||
-      (ai.apiKey && ai.apiKey !== '***' ? ai.apiKey : null) || undefined
-    let url = paramBaseUrl || ai.baseUrl
-    if (provider === 'ollama' && (!url || String(url).includes('/v1'))) {
-      url = 'http://localhost:11434'
-    }
-    if (provider === 'vllm' && (!url || String(url).includes(':11434'))) {
-      url = 'http://localhost:8000/v1'
-    }
-
-    if (provider === 'openrouter' || provider === 'google' || provider === 'openai') {
-      if (!apiKey) return []
-      try {
-        if (provider === 'openrouter') {
-          const res = await fetch('https://openrouter.ai/api/v1/models', {
-            headers: { Authorization: `Bearer ${apiKey}` },
-          })
-          if (!res.ok) return []
-          const data = await res.json()
-          const models = (data.data || []).map((m) => ({ value: m.id, label: m.name || m.id })).slice(0, 80)
-          return models
-        }
-        if (provider === 'google') {
-          const res = await fetch(
-            `https://generativelanguage.googleapis.com/v1beta/models?key=${apiKey}&pageSize=100`
-          )
-          if (!res.ok) return []
-          const data = await res.json()
-          const models = (data.models || [])
-            .filter((m) => m.name && (m.supportedGenerationMethods || []).includes('generateContent'))
-            .map((m) => {
-              const id = (m.name || '').replace('models/', '') || m.name || ''
-              return { value: id, label: m.displayName || id }
-            })
-          return models
-        }
-        if (provider === 'openai') {
-          const res = await fetch('https://api.openai.com/v1/models', {
-            headers: { Authorization: `Bearer ${apiKey}` },
-          })
-          if (!res.ok) return []
-          const data = await res.json()
-          const models = (data.data || []).filter((m) => m.id).map((m) => ({ value: m.id, label: m.id })).slice(0, 80)
-          return models
-        }
-      } catch {
-        return []
-      }
-    }
-
-    if (provider === 'ollama') {
-      try {
-        const base = (url || 'http://localhost:11434').replace(/\/$/, '')
-        const res = await fetch(`${base}/api/tags`)
-        if (!res.ok) return []
-        const data = await res.json()
-        return (data.models || []).map((m) => ({ value: m.name, label: m.name }))
-      } catch {
-        return []
-      }
-    }
-
-    if (provider === 'vllm') {
-      try {
-        const base = (url || 'http://localhost:8000/v1').replace(/\/v1\/?$/, '')
-        const res = await fetch(`${base}/v1/models`)
-        if (!res.ok) return []
-        const data = await res.json()
-        return (data.data || []).map((m) => ({ value: m.id, label: m.id }))
-      } catch {
-        return []
-      }
-    }
-
-    return []
-  })
+  ipcMain.handle('ai:listModels', async (_, params) => listModels(params))
 }
 
 module.exports = { registerAIHandlers, invokeChat, COC_KP_TOOLS }

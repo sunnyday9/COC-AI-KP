@@ -1,8 +1,10 @@
 import { defineStore } from 'pinia'
 import { ref, computed } from 'vue'
+import type { AIProviderType } from '../services/ai/types'
+import { PRESET_PROVIDERS, CUSTOM_PROVIDERS } from '../services/ai/types'
 
 export interface AIProviderConfig {
-  provider: 'vllm' | 'ollama' | 'openai' | 'google' | 'openrouter'
+  provider: AIProviderType
   baseUrl?: string
   model?: string
   apiKey?: string
@@ -12,19 +14,22 @@ export interface AIProviderConfig {
 
 export interface AppSettings {
   ai: AIProviderConfig
-  ragUrl: string
   syncServerUrl: string
 }
 
+const ALL_PROVIDER_IDS = new Set<string>([
+  ...PRESET_PROVIDERS.map((p) => p.id),
+  ...CUSTOM_PROVIDERS.map((p) => p.id),
+])
+
 const defaultSettings: AppSettings = {
   ai: {
-    provider: 'vllm',
-    baseUrl: 'http://localhost:8000/v1',
-    model: 'Qwen2-7B-Instruct',
+    provider: 'openai',
+    baseUrl: '',
+    model: '',
     temperature: 0.7,
     maxTokens: 2048,
   },
-  ragUrl: 'http://localhost:8001',
   syncServerUrl: 'http://localhost:3000',
 }
 
@@ -37,13 +42,11 @@ export const useSettingsStore = defineStore('settings', () => {
       const saved = await api.getSettings()
       if (saved && typeof saved === 'object') {
         const ai = { ...defaultSettings.ai, ...(saved.ai || {}) }
-        if ((saved.ai as { provider?: string })?.provider === 'anthropic') ai.provider = 'openai'
-        if (ai.provider === 'google' && ai.model && !/^gemini[-0-9.]/i.test(ai.model)) {
-          ai.model = ''
+        if (!ALL_PROVIDER_IDS.has(ai.provider)) {
+          ai.provider = 'openai'
         }
         settings.value = {
           ai,
-          ragUrl: saved.ragUrl ?? defaultSettings.ragUrl,
           syncServerUrl: saved.syncServerUrl ?? defaultSettings.syncServerUrl,
         }
       }

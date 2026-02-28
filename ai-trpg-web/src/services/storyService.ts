@@ -24,7 +24,7 @@ export function textToChunks(
     // 匹配句子结束符：. ! ? 。！？以及可能的引号
     return text.split(/([.!?。！？][\s"'"'"'"'"]*)/)
       .filter((s) => s.trim().length > 0)
-      .reduce<string[]>((acc, part, idx, arr) => {
+      .reduce<string[]>((acc, part, idx, _arr) => {
         if (idx === 0) {
           acc.push(part)
         } else if (/^[.!?。！？]/.test(part)) {
@@ -175,8 +175,8 @@ export function markdownToChunks(
         sections.push(currentSection)
       }
       currentSection = {
-        level: headerMatch[1].length,
-        title: headerMatch[2].trim(),
+      level: headerMatch[1]!.length,
+      title: headerMatch[2]!.trim(),
         content: line + '\n',
       }
     } else if (currentSection) {
@@ -186,7 +186,7 @@ export function markdownToChunks(
       if (sections.length === 0) {
         sections.push({ level: 0, title: '', content: line + '\n' })
       } else {
-        sections[sections.length - 1].content += line + '\n'
+        sections[sections.length - 1]!.content += line + '\n'
       }
     }
   }

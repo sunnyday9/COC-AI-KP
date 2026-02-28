@@ -9,12 +9,6 @@ interface ElectronAPI {
   onKpStream: (handler: (payload: { streamId: string; type: 'chunk' | 'end' | 'error'; chunk?: string; content?: string; toolCalls?: { id: string; name: string; arguments: string }[]; error?: string }) => void) => () => void
   getSettings: () => Promise<Record<string, unknown>>
   setSettings: (settings: Record<string, unknown>) => Promise<void>
-  listScripts: () => Promise<{ name: string; path: string }[]>
-  readScript: (filePath: string) => Promise<string>
-  saveScript: (filePath: string, content: string) => Promise<void>
-  saveScriptToLibrary: (filename: string, content: string) => Promise<{ ok: boolean; path: string; name: string }>
-  deleteScript: (filePath: string) => Promise<void>
-  importScript: () => Promise<{ ok: boolean; error?: string; path?: string; name?: string }>
   listStories: () => Promise<{ name: string; path: string }[]>
   readStory: (filePath: string) => Promise<string>
   importStory: () => Promise<{ ok: boolean; error?: string; path?: string; name?: string }>

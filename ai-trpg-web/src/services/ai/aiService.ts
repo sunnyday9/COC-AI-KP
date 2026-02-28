@@ -1,22 +1,4 @@
 import type { AIProviderConfig, ChatRequest, ChatResponse, ChatStream } from './types'
-import { createOpenAICompatAdapter } from './adapters/openaiCompat'
-import { createOllamaAdapter } from './adapters/ollama'
-import { createGoogleAdapter } from './adapters/google'
-
-function getAdapter(config: AIProviderConfig) {
-  switch (config.provider) {
-    case 'vllm':
-    case 'openai':
-    case 'openrouter':
-      return createOpenAICompatAdapter(config)
-    case 'ollama':
-      return createOllamaAdapter(config)
-    case 'google':
-      return createGoogleAdapter(config)
-    default:
-      throw new Error(`Unknown provider: ${config.provider}`)
-  }
-}
 
 export async function chat(config: AIProviderConfig, request: ChatRequest): Promise<ChatResponse | ChatStream> {
   const api = (window as unknown as { electronAPI?: { aiChat: (p: unknown) => Promise<{ stream: boolean; content?: string; chunks?: string[] }> } }).electronAPI
@@ -38,8 +20,8 @@ export async function chat(config: AIProviderConfig, request: ChatRequest): Prom
     }
     return { content: result?.content ?? '' }
   }
-  const adapter = getAdapter(config)
-  return adapter.chat(request)
+
+  throw new Error('Electron IPC not available — AI calls require the Electron main process')
 }
 
 export function isStreamResponse(result: ChatResponse | ChatStream): result is ChatStream {

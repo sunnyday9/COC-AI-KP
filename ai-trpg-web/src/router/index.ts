@@ -8,8 +8,8 @@ const routes: RouteRecordRaw[] = [
     component: AppLayout,
     children: [
       { path: '', name: 'home', component: () => import('../views/HomeView.vue'), meta: { title: '首页' } },
-      { path: 'scripts', name: 'scripts', component: () => import('../views/ScriptListView.vue'), meta: { title: '剧本管理' } },
-      { path: 'lobby', name: 'lobby', component: () => import('../views/LobbyView.vue'), meta: { title: '游戏大厅' } },
+      { path: 'scripts', name: 'scripts', component: () => import('../views/ScriptListView.vue'), meta: { title: '故事管理' } },
+
       { path: 'occupation', name: 'occupation', component: () => import('../views/OccupationSelectView.vue'), meta: { title: '选择职业' } },
       { path: 'character-create', name: 'character-create', component: () => import('../views/CharacterCreateView.vue'), meta: { title: '创建角色' } },
       { path: 'game', name: 'game', component: () => import('../views/GameRoomView.vue'), meta: { title: '游戏房间' } },
