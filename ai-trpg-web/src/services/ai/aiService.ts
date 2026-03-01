@@ -1,7 +1,7 @@
 import type { AIProviderConfig, ChatRequest, ChatResponse, ChatStream } from './types'
 
 export async function chat(config: AIProviderConfig, request: ChatRequest): Promise<ChatResponse | ChatStream> {
-  const api = (window as unknown as { electronAPI?: { aiChat: (p: unknown) => Promise<{ stream: boolean; content?: string; chunks?: string[] }> } }).electronAPI
+  const api = window.electronAPI
   if (api?.aiChat) {
     const result = await api.aiChat({
       provider: config.provider,

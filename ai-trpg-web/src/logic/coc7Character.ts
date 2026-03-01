@@ -96,6 +96,26 @@ export function computeDerivedStats(attributes: COCAttributes): COCDerivedStats 
   }
 }
 
+/** COC 7th 伤害加值/体格表：STR+SIZ 对应 damageBonus 与 build */
+const STR_SIZ_DAMAGE_BUILD: { sumMax: number; damageBonus: string; build: number }[] = [
+  { sumMax: 12, damageBonus: '-2', build: -2 },
+  { sumMax: 16, damageBonus: '-1', build: -1 },
+  { sumMax: 24, damageBonus: '0', build: 0 },
+  { sumMax: 32, damageBonus: '+1D4', build: 1 },
+  { sumMax: 40, damageBonus: '+1D6', build: 2 },
+  { sumMax: 56, damageBonus: '+2D6', build: 3 },
+  { sumMax: 72, damageBonus: '+3D6', build: 4 },
+  { sumMax: 88, damageBonus: '+4D6', build: 5 },
+  { sumMax: 999, damageBonus: '+5D6', build: 6 },
+]
+
+/** 根据 STR+SIZ 查表得到伤害加值与体格 */
+export function getDamageBonusAndBuild(str: number, siz: number): { damageBonus: string; build: number } {
+  const sum = str + siz
+  const row = STR_SIZ_DAMAGE_BUILD.find((r) => sum <= r.sumMax)
+  return row ? { damageBonus: row.damageBonus, build: row.build } : { damageBonus: '0', build: 0 }
+}
+
 /** 生成完整角色卡（职业分配 + 兴趣技能 + 属性 + 衍生） */
 export function buildCharacterSheet(
   occupationId: string,
@@ -114,6 +134,7 @@ export function buildCharacterSheet(
     if (skills[k] == null) skills[k] = v
   })
   const derived = computeDerivedStats(attributes)
+  const { damageBonus, build } = getDamageBonusAndBuild(attributes.str, attributes.siz)
   return {
     occupationId,
     occupationName,
@@ -123,6 +144,16 @@ export function buildCharacterSheet(
     occupationSkillKeys: occupationSkillKeys.slice(0, 9),
     personalInterestKeys: personalInterestKeys.slice(0, PERSONAL_INTEREST_COUNT),
     derived,
+    damageBonus,
+    build,
+    armor: 0,
+    insanityState: 'normal',
+    phobias: [],
+    manias: [],
+    dailySanLoss: 0,
+    hasMajorWound: false,
+    isDying: false,
+    weapons: [],
   }
 }
 

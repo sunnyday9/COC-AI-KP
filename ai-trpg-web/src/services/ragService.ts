@@ -28,7 +28,7 @@ type ElectronRagAPI = {
 }
 
 function getApi(): ElectronRagAPI | null {
-  return (window as unknown as { electronAPI?: ElectronRagAPI }).electronAPI ?? null
+  return window.electronAPI ?? null
 }
 
 /** Check if RAG service is available */

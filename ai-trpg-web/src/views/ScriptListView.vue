@@ -8,7 +8,7 @@ import { useToast } from '../composables/useToast'
 const toast = useToast()
 const storyStore = useStoryStore()
 const { storyFiles, isLoading: storiesLoading } = storeToRefs(storyStore)
-const hasElectron = computed(() => !!(window as { electronAPI?: unknown }).electronAPI)
+const hasElectron = computed(() => !!window.electronAPI)
 
 const indexedStories = ref<IndexedStory[]>([])
 const indexStatus = ref<Record<string, 'idle' | 'loading' | 'ok' | 'error'>>({})

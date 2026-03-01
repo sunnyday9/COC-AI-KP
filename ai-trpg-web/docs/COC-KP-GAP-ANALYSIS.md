@@ -7,16 +7,23 @@
 
 ## 一、当前已实现的功能
 
-### 1.1 已有 Tool Calls（8 个）
+### 1.1 已有 Tool Calls（15 个）
 
 | Tool | 功能 | 状态 |
 |------|------|------|
-| `skill_check` | 技能检定（常规/困难/极难、大成功/大失败） | ✅ 已实现 |
-| `san_check` | 理智检定（d100 vs SAN，成功/失败损失） | ✅ 已实现 |
+| `skill_check` | 技能检定（常规/困难/极难、大成功/大失败；可选奖励骰/惩罚骰、孤注一掷 isPush） | ✅ 已实现 |
+| `opposed_check` | 对抗检定（双方 d100 比成功等级，平局比技能值，tieBreaker 反击/闪避；可选 sideA/B 奖励骰/惩罚骰，如以多打少） | ✅ 已实现 |
+| `melee_attack` | 近战一击（对抗检定 + 伤害加值 + 护甲减免 + 重伤/濒死/即死，调查员为败方时自动扣 HP 并判定） | ✅ 已实现 |
+| `ranged_attack` | 远程一击（命中检定 + 伤害 + 护甲减免 + 重伤/濒死/即死，targetIsInvestigator 时自动扣 HP 并判定） | ✅ 已实现 |
+| `san_check` | 理智检定（d100 vs SAN，成功/失败损失；自动累加当日 SAN 损失） | ✅ 已实现 |
+| `trigger_insanity` | 疯狂判定（SAN 归零→永久；当日损失≥1/5 当前 SAN→不定性；单次≥5→INT 检定→临时/压抑；发作表 1D10，9/10 恐惧症/躁狂症） | ✅ 已实现 |
 | `roll_dice` | 通用掷骰（伤害、随机事件） | ✅ 已实现 |
 | `adjust_hp` | HP 增减（伤害/治疗） | ✅ 已实现 |
-| `adjust_san` | SAN 增减 | ✅ 已实现 |
+| `apply_major_wound` | 重伤/濒死/即死判定（单次伤害>HP 最大值→即死；≥HP 一半→重伤+CON 昏迷；HP≤0 且重伤/即死→濒死） | ✅ 已实现 |
+| `adjust_san` | SAN 增减（负 delta 时累加当日 SAN 损失） | ✅ 已实现 |
 | `adjust_mp` | MP 增减 | ✅ 已实现 |
+| `spend_luck` | 消耗幸运点数（1:1 降低骰点，不可用于幸运/SAN/伤害骰） | ✅ 已实现 |
+| `reset_day` | 新游戏日：重置当日 SAN 损失为 0（过夜/新一天时调用，保证不定性疯狂判定正确） | ✅ 已实现 |
 | `transition_scene` | 场景转换记录 | ✅ 已实现 |
 | `grant_clue` | 线索授予 | ✅ 已实现 |
 
@@ -38,6 +45,8 @@
 ## 二、缺失的功能（按优先级分类）
 
 ### 🔴 P0 — 核心游戏循环必需（严重影响游玩体验）
+
+**状态**：本节所列 P0 项均已实现（工具、角色状态、战斗链见 §1.1 与 §6）。以下保留规则书引用与建议便于对照。
 
 #### 2.1 对抗检定（Opposed Rolls）
 
@@ -143,7 +152,7 @@
 | **护甲（Armor）** | 每次攻击减免固定伤害值 |
 | **重伤（Major Wound）** | 单次伤害 ≥ HP 最大值/2：倒地、CON 检定否则昏迷 |
 | **濒死（Dying）** | HP=0 + 重伤：每轮 CON 检定，失败即死 |
-| **即死（Instant Death）** | 单次伤害 > HP 最大值：立即死亡 |
+| **即死（Instant Death）** | 单次伤害 > HP 最大值：立即死亡（已由 `apply_major_wound` 处理） |
 | **以多打少（Outnumbered）** | 角色在一轮中第一次防御后，后续攻击者获得奖励骰 |
 | **战技（Maneuvers）** | 缴械/绊倒/擒抱等非伤害行动，需比较 Build |
 | **枪械详细规则** | 射程、快速射击、自动武器、故障、瞄准、掩体 |
@@ -151,10 +160,10 @@
 | **翻滚躲避（Diving for Cover）** | 闪避检定成功 → 射手获惩罚骰 |
 
 **建议实现**：
-- 新增 `melee_attack` tool（处理对抗检定、伤害加值、护甲减免、重伤判定）
-- 新增 `ranged_attack` tool（处理射程难度、枪械修正）
-- 新增 `apply_major_wound` tool（处理重伤后果）
-- 在角色状态中增加 `damageBonus`、`build`、`armor`、`weapons` 字段
+- 新增 `melee_attack` tool（处理对抗检定、伤害加值、护甲减免、重伤判定）→ ✅ 已实现
+- 新增 `ranged_attack` tool（处理射程难度、枪械修正）→ ✅ 已实现（命中检定 + 伤害 + 护甲 + 重伤/即死）
+- 新增 `apply_major_wound` tool（处理重伤后果）→ ✅ 已实现
+- 在角色状态中增加 `damageBonus`、`build`、`armor`、`weapons` 字段 → ✅ 已实现
 
 ---
 
@@ -162,14 +171,12 @@
 
 **规则书引用**：第五章 游戏系统
 
-对抗检定中的核心修正机制，完全缺失。
-
 - 奖励骰：额外投一个十位骰，取较低（更好）结果
 - 惩罚骰：额外投一个十位骰，取较高（更差）结果
 - 一个奖励骰与一个惩罚骰互相抵消
 - 通常最多 2 个奖励或惩罚骰
 
-**建议实现**：在 `skill_check` 和 `opposed_check` tool 中增加 `bonusDice` / `penaltyDice` 参数。
+**状态**：✅ 已实现。`skill_check` 支持 `bonusDice`/`penaltyDice`；`opposed_check` 支持 `sideABonusDice`/`sideAPenaltyDice`、`sideBBonusDice`/`sideBPenaltyDice`（如以多打少时给防御方惩罚骰等）。
 
 ---
 
@@ -474,14 +481,109 @@ interface COCCharacterSheetExtensions {
 
 ---
 
-## 六、总结
+## 六、已实现功能详情（Implementation Details）
+
+以下为按本差距分析文档逐步实现后的功能记录，便于后续维护与扩展时对照。
+
+### 6.0 工具调用多层架构（已实现）
+
+- **编排器 + 分域 Handler**：工具执行由 `src/toolCalling/orchestrator.ts` 统一入口，按工具名路由到 Check / Combat / Sanity / Resource / Narrative 五类 Handler（见 `src/toolCalling/handlers/`）。gameStore 的 `processToolCalls` 仅调用 `processToolCallsOrchestrator(toolCalls, buildToolContext())`。
+- **文档**：分类与调用链见 [docs/TOOL-CALLING.md](TOOL-CALLING.md)。
+
+### 6.1 Phase 1 — 核心检定与幸运（已实现）
+
+#### 对抗检定（opposed_check）
+
+- **位置**：`electron/ipc/aiHandlers.cjs`（工具定义）、`src/stores/gameStore.ts`（`processToolCalls` 内处理）。
+- **参数**：`sideAName`, `sideAValue`, `sideBName`, `sideBValue`, `tieBreaker`（`'attacker'` | `'defender'`）。
+- **逻辑**：双方各掷 d100，按常规难度得到成功等级；比较等级（大成功 > 极难 > 困难 > 常规 > 失败 > 大失败），等级相同则比较技能值，再相同则按 `tieBreaker` 判定（反击=attacker 胜，闪避=defender 胜）。
+- **返回**：`rollA`, `rollB`, `resultA`, `resultB`, `winner`（`'A'` | `'B'`），供 KP 叙事与后续伤害链使用。
+
+#### 技能检定扩展（skill_check）
+
+- **新增可选参数**：`bonusDice`、`penaltyDice`（0–2）、`isPush`（孤注一掷）。
+- **奖励骰/惩罚骰**：在 `gameStore` 中实现 `rollD100WithModifiers(bonusDice, penaltyDice)`：对十位数额外掷 d10，奖励骰取更低十位、惩罚骰取更高十位；一个奖励与一个惩罚互相抵消，最多各 2 个。
+- **孤注一掷**：`isPush: true` 仅影响结果中的标记与 KP 叙事提示，规则上仍为一次独立检定（不可用于幸运/SAN/战斗检定）。
+- **展示**：检定结果在对话中以系统消息展示，包含「奖励骰/惩罚骰」「孤注一掷」等标签。
+
+#### 幸运消耗（spend_luck）
+
+- **位置**：`aiHandlers.cjs` 中 `spend_luck` 工具、`gameStore.processToolCalls` 中处理逻辑及 `updateCharacterLuck`。
+- **参数**：`amount`（消耗点数）。
+- **逻辑**：从当前角色 `attributes.luck` 扣除（不超过当前值），写入角色卡；返回 `spent`, `previousLuck`, `newLuck`。
+- **限制**：由 KP 在叙事与提示中约束「不可用于幸运检定、SAN 检定、伤害骰」；工具本身不区分场景。
+
+#### 角色状态
+
+- **Luck 更新**：新增 `updateCharacterLuck(delta)`，与 HP/MP/SAN 一样会触发 `derivedStatsVersion` 更新，供 UI 同步显示。
+
+### 6.2 Phase 1 — 疯狂系统与战斗扩展（已实现）
+
+#### 疯狂系统（trigger_insanity）
+
+- **位置**：`electron/ipc/aiHandlers.cjs`（工具定义）、`src/stores/gameStore.ts`（`processToolCalls` 内处理）。
+- **参数**：`sanLost`（本次 SAN 损失）、`intValue`（调查员 INT，用于单次损失≥5 时的临时疯狂门控检定）。
+- **逻辑**：
+  - SAN 扣减后 ≤ 0 → 设为**永久疯狂**（`insanityState: 'permanent'`）。
+  - 当日累计 SAN 损失 ≥ 当前 SAN 的 1/5 → **不定性疯狂**，掷 1D10 发作表；9=添加恐惧症，10=添加躁狂症（当前为占位「随机恐惧症/躁狂症」，可后续接 Table IX/X）。
+  - 单次损失 ≥ 5 → INT 检定：成功则**临时疯狂**并掷 1D10 发作；失败则**压抑**（不陷入临时疯狂）。
+- **角色状态**：`insanityState`（normal | temporary | indefinite | permanent）、`phobias`、`manias`、`dailySanLoss`。`san_check` 与 `adjust_san`（负 delta）后自动累加 `dailySanLoss`。
+- **Store**：`addCharacterDailySanLoss`、`resetCharacterDailySanLoss`、`updateCharacterInsanityState`；角色上下文（`buildCharacterContext`）中输出疯狂状态与恐惧症/躁狂症供 KP 叙事。
+
+#### 战斗扩展（apply_major_wound）与角色卡扩展
+
+- **apply_major_wound**：
+  - **位置**：同上，工具定义在 `aiHandlers.cjs`，处理在 `gameStore.processToolCalls`。
+  - **参数**：`hpMax`、`damageDealt`（本击伤害）、`hpAfter`（扣减后当前 HP）。
+  - **逻辑**：若 `damageDealt > hpMax` 则**即死**（立即死亡），设 `hasMajorWound`、`isDying`，返回 `instantDeath: true`；否则若 `damageDealt >= hpMax/2` 则重伤并 CON 昏迷检定；若 `hpAfter <= 0` 且（重伤或即死）则 `isDying: true`。返回 `instantDeath`、`hasMajorWound`、`isDying`、`unconscious` 供 KP 叙事。
+- **角色卡扩展**（`src/types/character.ts`）：新增可选字段 `damageBonus`、`build`、`mov`、`armor`、`insanityState`、`phobias`、`manias`、`dailySanLoss`、`hasMajorWound`、`isDying`、`weapons`，兼容旧存档。
+- **角色创建**（`src/logic/coc7Character.ts`）：`getDamageBonusAndBuild(str, siz)` 按 STR+SIZ 表计算伤害加值与体格；`buildCharacterSheet` 中为新角色写入上述字段默认值（含 `weapons: []`）。
+
+#### 近战/远程一击（melee_attack、ranged_attack）与武器字段（weapons）
+
+- **melee_attack**：
+  - **位置**：`aiHandlers.cjs` 工具定义、`gameStore.processToolCalls` 内处理。
+  - **参数**：`sideAName`/`sideAValue`（攻击方 A）、`sideBName`/`sideBValue`（防御方 B）、`tieBreaker`（attacker/defender）、`damageExpr`（武器伤害如 "1d6"）、`attackerDamageBonus`/`defenderDamageBonus`（如 "0","+1D4"）、`attackerArmor`/`defenderArmor`、`investigatorSide`（'A'|'B'|'none'）；可选双方奖励/惩罚骰。
+  - **逻辑**：执行对抗检定 → 胜方造成伤害 = 投武器骰 + 胜方伤害加值 - 败方护甲（min 0）；若 `investigatorSide` 为败方则自动 `updateCharacterHP(-damageDealt)` 并执行即死/重伤/濒死判定（与 apply_major_wound 一致）。
+  - **用途**：一次调用完成近战链，替代 opposed_check + roll_dice + adjust_hp + apply_major_wound。
+
+- **ranged_attack**：
+  - **位置**：同上。
+  - **参数**：`skillName`/`skillValue`、`difficulty`、`damageExpr`、`targetArmor`、`targetIsInvestigator`。
+  - **逻辑**：技能检定（常规/困难/极难）→ 命中则投伤害减护甲；若 `targetIsInvestigator` 则自动扣 HP 并执行重伤/濒死/即死判定。
+  - **用途**：一次调用完成远程链，替代 skill_check + roll_dice + adjust_hp + apply_major_wound。
+
+- **weapons**（`COCWeapon[]`）：类型为 `{ name: string; damage?: string; range?: string }[]`；角色创建时默认 `weapons: []`；`buildCharacterContext` 中输出武器列表供 KP 参考。后续可由创建流程或剧本预填。
+
+### 6.3 Phase 1 — 其他 P0 补充（已实现）
+
+#### 对抗检定奖励骰/惩罚骰（opposed_check）
+
+- **位置**：`aiHandlers.cjs` 中 `opposed_check` 增加可选参数；`gameStore.processToolCalls` 中双方分别使用 `rollD100WithModifiers`。
+- **参数**：`sideABonusDice`、`sideAPenaltyDice`、`sideBBonusDice`、`sideBPenaltyDice`（0–2），与 `skill_check` 规则一致（奖励骰取低十位、惩罚骰取高十位，互抵）。
+- **用途**：以多打少等场景下可为一方赋予惩罚骰或另一方奖励骰；展示消息中带「奖/惩」标签。
+
+#### 新游戏日重置（reset_day）
+
+- **位置**：`aiHandlers.cjs` 新增 `reset_day` 工具（无参数）；`gameStore.processToolCalls` 中调用 `resetCharacterDailySanLoss()`。
+- **逻辑**：将角色 `dailySanLoss` 置 0，表示新一天开始。KP 在叙事「过夜」「新的一天」等时机调用，保证后续不定性疯狂判定（当日损失 ≥ 当前 SAN 的 1/5）基于新的当日累计。
+- **展示**：系统消息「新的一天开始，当日 SAN 损失已重置」。
+
+### 6.4 后续可实现的 Phase 1 项（见第五节路线图）
+
+- 疯狂发作表 Table VII/VIII 完整效果文案与恐惧症/躁狂症 Table IX/X 集成。
+- 先攻、战技（Build 比较）、枪械详细规则。
+
+---
+
+## 七、总结
 
 | 分类 | 已实现 | 部分实现 | 完全缺失 |
 |------|--------|----------|----------|
-| 技能检定 | ✅ 基本检定 | ⚠️ 缺奖励/惩罚骰、孤注一掷、对抗检定 | |
-| 战斗 | ✅ 基本攻击链 | | ❌ 先攻、伤害加值、护甲、重伤、濒死、战技、枪械规则 |
-| 理智 | ✅ SAN 检定 | | ❌ 疯狂系统、恐惧症/躁狂症、Max SAN 计算、SAN 恢复 |
-| 幸运 | ✅ 属性存在 | | ❌ 消耗机制、恢复机制 |
+| 技能检定 | ✅ 基本检定、奖励/惩罚骰、孤注一掷、对抗检定 | | |
+| 战斗 | ✅ 基本攻击链、近战一击（melee_attack）、远程一击（ranged_attack）、对抗检定（opposed_check 含奖励/惩罚骰）、即死/重伤/濒死（apply_major_wound）、伤害加值/体格/护甲/武器（角色卡） | | ❌ 先攻、战技、枪械详细规则 |
+| 理智 | ✅ SAN 检定、疯狂系统（trigger_insanity）、恐惧症/躁狂症（简化）、新日重置（reset_day） | | ❌ Max SAN 计算、SAN 恢复、发作表全文案 |
+| 幸运 | ✅ 属性存在、消耗机制（spend_luck） | | ❌ 恢复机制（幕间掷 1D100） |
 | 治疗 | ✅ 简单 HP 调整 | | ❌ 急救/医学结构化规则、自然恢复、重伤恢复 |
 | 魔法 | ✅ MP 跟踪 | | ❌ 施法、典籍、法术学习 |
 | 追逐 | | | ❌ 整个子系统 |
@@ -489,4 +591,4 @@ interface COCCharacterSheetExtensions {
 | 环境 | ✅ 场景转换 | | ❌ 环境伤害（坠落/火焰/溺水/毒素） |
 | 调查 | ✅ 线索授予 | | ❌ 灵感检定 |
 
-**当前实现覆盖了 COC 7th 约 30-35% 的 KP 所需机制**。Phase 1 的实现将覆盖率提升至约 60-65%，Phase 1+2 约 75-80%，全部四期约 90-95%。
+**当前实现覆盖了 COC 7th 约 60-65% 的 KP 所需机制**（含 Phase 1 全部 P0：对抗检定与奖励/惩罚骰、近战/远程一击工具、幸运消耗、疯狂系统与 reset_day、即死/重伤/濒死、伤害加值/体格/护甲/武器）。Phase 1+2 约 75-80%，全部四期约 90-95%。

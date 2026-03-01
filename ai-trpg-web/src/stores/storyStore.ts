@@ -15,7 +15,7 @@ export const useStoryStore = defineStore('story', () => {
   const error = ref<string | null>(null)
 
   async function loadStories() {
-    const api = (window as { electronAPI?: { listStories: () => Promise<StoryFile[]> } }).electronAPI
+    const api = window.electronAPI
     if (!api?.listStories) return
     try {
       isLoading.value = true
@@ -29,7 +29,7 @@ export const useStoryStore = defineStore('story', () => {
   }
 
   async function importStory() {
-    const api = (window as { electronAPI?: { importStory: () => Promise<{ ok: boolean; path?: string; name?: string; error?: string }> } }).electronAPI
+    const api = window.electronAPI
     if (!api?.importStory) return { ok: false, error: 'No Electron' }
     const result = await api.importStory()
     if (result?.ok) await loadStories()
@@ -37,7 +37,7 @@ export const useStoryStore = defineStore('story', () => {
   }
 
   async function deleteStory(path: string) {
-    const api = (window as { electronAPI?: { deleteStory: (path: string) => Promise<void> } }).electronAPI
+    const api = window.electronAPI
     if (!api?.deleteStory) return
     await api.deleteStory(path)
     await loadStories()
@@ -46,7 +46,7 @@ export const useStoryStore = defineStore('story', () => {
   const pathToStoryId = (path: string) => pathToId(path)
 
   async function indexStoryForRag(path: string): Promise<{ ok: boolean; error?: string; indexed?: number }> {
-    const api = (window as { electronAPI?: { readStory: (path: string) => Promise<string> } }).electronAPI
+    const api = window.electronAPI
     if (!api?.readStory) return { ok: false, error: 'No Electron' }
     try {
       const content = await api.readStory(path)

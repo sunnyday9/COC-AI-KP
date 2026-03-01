@@ -2,11 +2,22 @@ import { defineStore } from 'pinia'
 import { ref } from 'vue'
 import type { Message } from '../types/game'
 import type { GamePhase, COCCharacterSheet } from '../types/character'
-import { chat, isStreamResponse } from '../services/ai'
 import { getContext, getStoryOverview } from '../services/ragService'
+import {
+  hasKpAgent,
+  runKpAgentLoop as runKpAgentLoopService,
+  runDirectChat as runDirectChatService,
+} from '../services/kpSessionService'
+import {
+  resolveSkillCheck as resolveSkillCheckRule,
+  SUCCESS_LEVEL_RANK as SUCCESS_LEVEL_RANK_RULE,
+  SKILL_CHECK_RESULT_TEXT as SKILL_CHECK_RESULT_TEXT_RULE,
+} from '../logic/coc7Rules'
 import { rollD } from '../services/diceService'
 import { getSkillName } from '../data/coc7'
 import { useSettingsStore } from './settingsStore'
+import { processToolCalls as processToolCallsOrchestrator } from '../toolCalling'
+import type { ToolHandlerContext } from '../toolCalling'
 
 function generateId(): string {
   return 'msg_' + Date.now() + '_' + Math.random().toString(36).slice(2, 9)
@@ -166,6 +177,57 @@ export const useGameStore = defineStore('game', () => {
     c.skills[skillId] = Math.max(0, Math.min(99, newValue))
   }
 
+  function updateCharacterLuck(delta: number) {
+    const c = characterSheet.value
+    if (!c?.attributes) return
+    const newLuck = Math.max(0, Math.min(99, c.attributes.luck + delta))
+    characterSheet.value = { ...c, attributes: { ...c.attributes, luck: newLuck } }
+    derivedStatsVersion.value += 1
+  }
+
+  /** P0 疯狂：当日累计 SAN 损失（san_check 后调用） */
+  function addCharacterDailySanLoss(amount: number) {
+    const c = characterSheet.value
+    if (!c) return
+    const prev = c.dailySanLoss ?? 0
+    characterSheet.value = { ...c, dailySanLoss: prev + amount }
+    derivedStatsVersion.value += 1
+  }
+
+  /** P0 疯狂：重置当日 SAN 损失（新一天时由 KP 或规则触发） */
+  function resetCharacterDailySanLoss() {
+    const c = characterSheet.value
+    if (!c) return
+    characterSheet.value = { ...c, dailySanLoss: 0 }
+    derivedStatsVersion.value += 1
+  }
+
+  /** P0 疯狂：设置疯狂状态、恐惧症、躁狂症 */
+  function updateCharacterInsanityState(state: 'normal' | 'temporary' | 'indefinite' | 'permanent', phobias?: string[], manias?: string[]) {
+    const c = characterSheet.value
+    if (!c) return
+    const next: Record<string, unknown> = { ...c, insanityState: state }
+    if (phobias !== undefined) next.phobias = phobias
+    if (manias !== undefined) next.manias = manias
+    characterSheet.value = next as typeof c
+    derivedStatsVersion.value += 1
+  }
+
+  /** P0 战斗：设置重伤与濒死 */
+  function setCharacterMajorWound(hasMajorWound: boolean) {
+    const c = characterSheet.value
+    if (!c) return
+    characterSheet.value = { ...c, hasMajorWound }
+    derivedStatsVersion.value += 1
+  }
+
+  function setCharacterDying(isDying: boolean) {
+    const c = characterSheet.value
+    if (!c) return
+    characterSheet.value = { ...c, isDying }
+    derivedStatsVersion.value += 1
+  }
+
   function updateLastMessage(updater: (m: Message) => void) {
     const last = messages.value[messages.value.length - 1]
     if (last) updater(last)
@@ -179,6 +241,14 @@ export const useGameStore = defineStore('game', () => {
       const d = char.derived ?? { hp: 0, hpMax: 0, mp: 0, mpMax: 0, san: 0, sanMax: 0 }
       parts.push(`## 调查员: ${char.playerName} (${char.occupationName})`)
       parts.push(`HP ${d.hp}/${d.hpMax} MP ${d.mp}/${d.mpMax} SAN ${d.san}/${d.sanMax}`)
+      if (char.damageBonus != null || char.build != null) parts.push(`伤害加值: ${char.damageBonus ?? '-'} 体格: ${char.build ?? '-'}`)
+      if (char.armor != null && char.armor > 0) parts.push(`护甲: ${char.armor}`)
+      if (char.weapons?.length) parts.push('武器: ' + char.weapons.map((w) => w.name + (w.damage ? ` ${w.damage}` : '')).join(', '))
+      if (char.insanityState && char.insanityState !== 'normal') parts.push(`疯狂状态: ${char.insanityState}`)
+      if (char.phobias?.length) parts.push(`恐惧症: ${char.phobias.join(', ')}`)
+      if (char.manias?.length) parts.push(`躁狂症: ${char.manias.join(', ')}`)
+      if (char.hasMajorWound) parts.push('重伤')
+      if (char.isDying) parts.push('濒死')
       parts.push(`属性: STR ${char.attributes.str} CON ${char.attributes.con} SIZ ${char.attributes.siz} DEX ${char.attributes.dex} APP ${char.attributes.app} INT ${char.attributes.int} POW ${char.attributes.pow} EDU ${char.attributes.edu} Luck ${char.attributes.luck}`)
       const skillLines = Object.entries(char.skills)
         .filter(([, v]) => v > 0)
@@ -194,7 +264,6 @@ export const useGameStore = defineStore('game', () => {
     return parts.join('\n')
   }
 
-  type AiConfig = { provider: string; model?: string; baseUrl?: string; apiKey?: string; temperature?: number; maxTokens?: number }
   type ToolCall = { id: string; name: string; arguments: string }
 
   const BASE_INSTRUCTIONS = [
@@ -210,15 +279,17 @@ export const useGameStore = defineStore('game', () => {
     '',
     '【检定规则】',
     '- 仅在有戏剧性冲突、不确定性或危险时才要求检定。日常/职业常规行动自动成功。',
-    '- 需要检定时 → 调用 skill_check 工具（参数：技能名、技能值、难度）。',
-    '- 遭遇恐怖事物时 → 调用 san_check 工具。',
+    '- 需要检定时 → 调用 skill_check 工具（参数：技能名、技能值、难度；可选 bonusDice/penaltyDice、isPush 孤注一掷）。',
+    '- 遭遇恐怖事物时 → 调用 san_check 工具；若发生 SAN 损失，再视情况调用 trigger_insanity(sanLost, intValue) 判定永久/不定性/临时疯狂与发作。',
     '- 失败 ≠ 完全失败：可以是部分成功、挫折或情况改变。',
-    '- 检定失败后可提供"孤注一掷"选项（SAN检定和战斗检定除外）。',
+    '- 检定失败后可提供"孤注一掷"选项（SAN检定和战斗检定除外），再次调用 skill_check 时设 isPush: true。',
+    '- 玩家可在技能检定后选择消耗幸运：调用 spend_luck(amount)，不可用于幸运/SAN/伤害骰。',
     '',
     '【战斗规则 — 必须调用工具链】',
-    '- 攻击: 调用 skill_check → 命中后调用 roll_dice → 最后调用 adjust_hp',
-    '- NPC 攻击玩家时同样必须完整调用工具链',
-    '- 禁止跳过任何步骤，禁止在文字中自编伤害数字',
+    '- 近战：优先调用 melee_attack（一次完成对抗检定、伤害加值、护甲减免、重伤/濒死/即死）；或分步调用 opposed_check → roll_dice → adjust_hp → apply_major_wound。',
+    '- 远程：优先调用 ranged_attack（一次完成命中检定、伤害、护甲、重伤/濒死/即死）；或分步 skill_check → roll_dice → adjust_hp → apply_major_wound。',
+    '- NPC 攻击玩家时同样必须完整调用工具链。',
+    '- 禁止跳过任何步骤，禁止在文字中自编伤害数字。',
     '',
     '【线索传递】',
     '- 显明线索：不需检定，直接调用 grant_clue 工具。',
@@ -226,6 +297,7 @@ export const useGameStore = defineStore('game', () => {
     '- 绝不让单一线索成为唯一推进路径。',
     '',
     '【场景管理】',
+    '- 新游戏日开始（如过夜、休息后）时，调用 reset_day 工具重置当日 SAN 损失，以便不定性疯狂判定正确。',
     '- 当调查员移动到新地点时，调用 transition_scene 工具。',
     '- 场景名称来自故事原文，不要自行创造故事中不存在的地点。',
     '- 若调查员想去的地方在故事情报中没有提及，告知该处无事可做并引导回到故事主线。',
@@ -252,209 +324,76 @@ export const useGameStore = defineStore('game', () => {
     return Math.max(0, Math.floor(Number(s)) || 0)
   }
 
-  function resolveSkillCheck(roll: number, skillValue: number, difficulty: string): { threshold: number; result: string } {
-    const regular = skillValue
-    const hard = Math.floor(skillValue / 2)
-    const extreme = Math.floor(skillValue / 5)
-    const threshold = difficulty === 'extreme' ? extreme : difficulty === 'hard' ? hard : regular
-    const isFumble = skillValue < 50 ? roll >= 96 : roll === 100
-    if (roll === 1) return { threshold, result: 'critical_success' }
-    if (isFumble) return { threshold, result: 'fumble' }
-    if (roll <= extreme) return { threshold, result: 'extreme_success' }
-    if (roll <= hard) return { threshold, result: 'hard_success' }
-    if (roll <= regular) return { threshold, result: 'regular_success' }
-    return { threshold, result: 'failure' }
+  /** Roll COC damage bonus: "-2"/"-1" -> fixed negative, "0"/"" -> 0, "+1D4"/"+2D6" -> roll dice. */
+  function rollDamageBonus(db: string): number {
+    const s = String(db ?? '0').trim().toUpperCase()
+    if (s === '' || s === '0') return 0
+    const neg = s.match(/^-(\d+)$/)
+    if (neg) return -Math.min(2, parseInt(neg[1]!, 10))
+    const plus = s.match(/^\+(\d+)?D(\d+)$/)
+    if (plus) return parseDiceExpr((plus[1] || '1') + 'd' + plus[2])
+    return 0
   }
 
-  const SKILL_CHECK_RESULT_TEXT: Record<string, string> = {
-    critical_success: '大成功',
-    extreme_success: '极难成功',
-    hard_success: '困难成功',
-    regular_success: '成功',
-    failure: '失败',
-    fumble: '大失败',
+  const resolveSkillCheck = resolveSkillCheckRule
+  const SUCCESS_LEVEL_RANK = SUCCESS_LEVEL_RANK_RULE
+
+  /** Roll d100 with optional bonus/penalty dice. COC: bonus = extra d10 for tens digit, take lower (better). Penalty = take higher. 00 = 100 (tens 0). */
+  function rollD100WithModifiers(bonusDice: number, penaltyDice: number): number {
+    const base = rollD(100)
+    const net = Math.max(-2, Math.min(2, (bonusDice || 0) - (penaltyDice || 0)))
+    if (net === 0) return base
+    const tens = base === 100 ? 0 : Math.floor(base / 10)
+    const ones = base === 100 ? 0 : base % 10
+    if (net > 0) {
+      let bestTens = tens
+      for (let i = 0; i < net; i++) {
+        const r = rollD(10)
+        const t = r === 10 ? 0 : r
+        if (t < bestTens) bestTens = t
+      }
+      return bestTens === 0 && ones === 0 ? 100 : bestTens * 10 + ones
+    } else {
+      let worstTens = tens
+      for (let i = 0; i < -net; i++) {
+        const r = rollD(10)
+        const t = r === 10 ? 0 : r
+        if (t > worstTens) worstTens = t
+      }
+      return worstTens === 0 && ones === 0 ? 100 : worstTens * 10 + ones
+    }
+  }
+
+  const SKILL_CHECK_RESULT_TEXT = SKILL_CHECK_RESULT_TEXT_RULE
+
+  function buildToolContext(): ToolHandlerContext {
+    return {
+      characterSheet: characterSheet.value,
+      getSkillName,
+      rollD,
+      parseDiceExpr,
+      rollD100WithModifiers,
+      rollDamageBonus,
+      resolveSkillCheck,
+      SUCCESS_LEVEL_RANK,
+      SKILL_CHECK_RESULT_TEXT,
+      updateCharacterHP,
+      updateCharacterMP,
+      updateCharacterSAN,
+      updateCharacterLuck,
+      addCharacterDailySanLoss,
+      resetCharacterDailySanLoss,
+      updateCharacterInsanityState,
+      setCharacterMajorWound,
+      setCharacterDying,
+      transitionToScene,
+      addClue,
+      generateId,
+    }
   }
 
   function processToolCalls(toolCalls: ToolCall[]): { toolResults: { role: 'tool'; tool_call_id: string; content: string }[]; displayMessages: Message[] } {
-    const toolResults: { role: 'tool'; tool_call_id: string; content: string }[] = []
-    const displayMessages: Message[] = []
-    for (const tc of toolCalls) {
-      let result = 'ok'
-      try {
-        const args = JSON.parse(tc.arguments || '{}') as Record<string, unknown>
-
-        if (tc.name === 'skill_check') {
-          const skillName = String(args.skillName ?? '未知')
-          const skillValue = Math.max(0, Math.min(99, Math.floor(Number(args.skillValue ?? 50))))
-          const difficulty = String(args.difficulty ?? 'regular')
-          const roll = rollD(100)
-          const { threshold, result: checkResult } = resolveSkillCheck(roll, skillValue, difficulty)
-          const isSuccess = ['critical_success', 'extreme_success', 'hard_success', 'regular_success'].includes(checkResult)
-          result = JSON.stringify({ roll, threshold, skillName, skillValue, difficulty, result: checkResult, success: isSuccess })
-          const diffLabel = difficulty === 'extreme' ? '极难' : difficulty === 'hard' ? '困难' : '常规'
-          displayMessages.push({
-            id: generateId(), timestamp: Date.now(), role: 'system', type: 'dice',
-            content: `${skillName}检定(${diffLabel}) d100: ${roll} / 目标≤${threshold} → ${SKILL_CHECK_RESULT_TEXT[checkResult] ?? checkResult}`,
-            result: { roll, target: threshold },
-          })
-        } else if (tc.name === 'san_check') {
-          const currentSan = Math.max(0, Math.min(99, Math.floor(Number(args.currentSan ?? 50))))
-          const successLossExpr = String(args.successLoss ?? '0')
-          const failureLossExpr = String(args.failureLoss ?? '1d6')
-          const roll = rollD(100)
-          const passed = roll <= currentSan
-          const isFumble = roll === 100
-          const lossExpr = passed ? successLossExpr : failureLossExpr
-          let sanLost = isFumble ? 0 : parseDiceExpr(lossExpr)
-          if (isFumble) {
-            const m = failureLossExpr.match(/^(\d+)?d(\d+)$/)
-            sanLost = m ? parseInt(m[1] || '1', 10) * parseInt(m[2]!, 10) : parseDiceExpr(failureLossExpr)
-          }
-          updateCharacterSAN(-sanLost)
-          result = JSON.stringify({ roll, currentSan, passed, isFumble, sanLost, lossExpression: lossExpr })
-          const statusText = isFumble ? '大失败' : passed ? '成功' : '失败'
-          displayMessages.push({
-            id: generateId(), timestamp: Date.now(), role: 'system', type: 'dice',
-            content: `SAN检定 d100: ${roll} / 目标≤${currentSan} → ${statusText}，损失 ${sanLost} SAN`,
-            result: { roll, target: currentSan },
-          })
-          if (sanLost > 0) {
-            displayMessages.push({ id: generateId(), timestamp: Date.now(), role: 'system', content: `SAN -${sanLost}` })
-          }
-        } else if (tc.name === 'roll_dice') {
-          const sides = Math.max(2, Math.min(1000, Math.floor(Number(args.sides ?? 100)) || 100))
-          const roll = rollD(sides)
-          result = JSON.stringify({ roll, sides })
-          displayMessages.push({ id: generateId(), timestamp: Date.now(), role: 'system', type: 'dice', content: `投骰 d${sides}: ${roll}`, result: { roll, target: sides } })
-        } else if (tc.name === 'adjust_hp') {
-          const delta = Number(args.delta ?? 0)
-          updateCharacterHP(delta)
-          result = `HP adjusted by ${delta}`
-          displayMessages.push({ id: generateId(), timestamp: Date.now(), role: 'system', content: delta >= 0 ? `HP +${delta}` : `HP ${delta}` })
-        } else if (tc.name === 'adjust_san') {
-          const delta = Number(args.delta ?? 0)
-          updateCharacterSAN(delta)
-          result = `SAN adjusted by ${delta}`
-          displayMessages.push({ id: generateId(), timestamp: Date.now(), role: 'system', content: delta >= 0 ? `SAN +${delta}` : `SAN ${delta}` })
-        } else if (tc.name === 'adjust_mp') {
-          const delta = Number(args.delta ?? 0)
-          updateCharacterMP(delta)
-          result = `MP adjusted by ${delta}`
-          displayMessages.push({ id: generateId(), timestamp: Date.now(), role: 'system', content: delta >= 0 ? `MP +${delta}` : `MP ${delta}` })
-        } else if (tc.name === 'transition_scene') {
-          const sceneName = String(args.sceneName ?? '')
-          if (sceneName) {
-            transitionToScene(sceneName)
-            result = `Scene transitioned to: ${sceneName}`
-            displayMessages.push({ id: generateId(), timestamp: Date.now(), role: 'system', content: `场景切换: ${sceneName}` })
-          } else result = 'error: sceneName required'
-        } else if (tc.name === 'grant_clue') {
-          const description = String(args.description ?? '')
-          if (description) {
-            addClue(description)
-            result = `Clue granted: ${description}`
-            displayMessages.push({ id: generateId(), timestamp: Date.now(), role: 'system', content: `获得线索: ${description}` })
-          } else result = 'error: description required'
-        }
-      } catch { result = 'error' }
-      toolResults.push({ role: 'tool', tool_call_id: tc.id, content: result })
-    }
-    return { toolResults, displayMessages }
-  }
-
-  async function kpInvokeOnce(
-    msgs: unknown[],
-    aiConfig: AiConfig,
-    onDelta?: (chunk: string) => void,
-  ): Promise<{ content?: string; toolCalls?: ToolCall[] }> {
-    const api = (window as unknown as {
-      electronAPI?: {
-        kpInvoke?: (p: unknown) => Promise<{ content?: string; toolCalls?: ToolCall[] }>
-        kpInvokeStream?: (p: unknown) => Promise<{ streamId: string }>
-        onKpStream?: (handler: (payload: { streamId: string; type: 'chunk' | 'end' | 'error'; chunk?: string; content?: string; toolCalls?: ToolCall[]; error?: string }) => void) => () => void
-      }
-    }).electronAPI
-
-    if (api?.kpInvokeStream && api?.onKpStream) {
-      const kpStream = api.kpInvokeStream
-      const onStream = api.onKpStream
-      const { streamId } = await kpStream({
-        messages: msgs, provider: aiConfig.provider, model: aiConfig.model,
-        baseUrl: aiConfig.baseUrl, apiKey: aiConfig.apiKey, temperature: aiConfig.temperature, maxTokens: aiConfig.maxTokens,
-      })
-      return await new Promise((resolve, reject) => {
-        let streamed = ''
-        const off = onStream((payload) => {
-          if (!payload || payload.streamId !== streamId) return
-          if (payload.type === 'chunk' && payload.chunk) { streamed += payload.chunk; onDelta?.(payload.chunk) }
-          else if (payload.type === 'end') { off(); resolve({ content: payload.content ?? streamed, toolCalls: payload.toolCalls }) }
-          else if (payload.type === 'error') { off(); reject(new Error(payload.error || 'KP stream error')) }
-        })
-      })
-    }
-
-    if (!api?.kpInvoke) throw new Error('No KP API')
-    return await api.kpInvoke({
-      messages: msgs, provider: aiConfig.provider, model: aiConfig.model,
-      baseUrl: aiConfig.baseUrl, apiKey: aiConfig.apiKey, temperature: aiConfig.temperature, maxTokens: aiConfig.maxTokens,
-    })
-  }
-
-  async function runKpAgentLoop(chatMessages: unknown[], aiConfig: AiConfig): Promise<string> {
-    let fullContent = ''
-    let msgs: unknown[] = chatMessages
-    const MAX_TOOL_ITERATIONS = 8
-    for (let loop = 0; loop < MAX_TOOL_ITERATIONS; loop++) {
-      const base = fullContent
-      let iter = ''
-      const r = await kpInvokeOnce(msgs, aiConfig, (chunk) => {
-        iter += chunk
-        const preview = (base ? base + '\n\n' : '') + iter
-        updateLastMessage((m) => { if (m.role === 'kp') m.content = sanitizeKpResponse(preview) })
-      })
-
-      const endContent = r?.content
-      const iterFinal = (endContent !== undefined && endContent !== null ? endContent : iter) || ''
-      if (iterFinal.trim()) {
-        fullContent = base ? (base + '\n\n' + iterFinal) : iterFinal
-      }
-      updateLastMessage((m) => { if (m.role === 'kp') m.content = sanitizeKpResponse(fullContent) })
-
-      if (!r?.toolCalls?.length) break
-      const { toolResults, displayMessages } = processToolCalls(r.toolCalls)
-      insertMessagesBeforeLast(displayMessages)
-      msgs = [
-        ...msgs,
-        { role: 'assistant' as const, content: iterFinal, tool_calls: r.toolCalls.map((t) => ({ id: t.id, type: 'function' as const, function: { name: t.name, arguments: t.arguments } })) },
-        ...toolResults,
-      ]
-    }
-
-    if (!fullContent.trim()) {
-      fullContent = '守密人正在思考……请稍候再试，或换一种方式描述你的行动。'
-      updateLastMessage((m) => { if (m.role === 'kp') m.content = fullContent })
-    }
-
-    return fullContent
-  }
-
-  async function runDirectChat(chatMessages: { role: 'system' | 'user' | 'assistant'; content: string }[], aiConfig: AiConfig): Promise<string> {
-    let fullContent = ''
-    const result = await chat(aiConfig, { messages: chatMessages, stream: true })
-    if (isStreamResponse(result)) {
-      for await (const chunk of result) {
-        fullContent += chunk
-        updateLastMessage((m) => { if (m.role === 'kp') m.content = sanitizeKpResponse(fullContent) })
-      }
-    } else {
-      fullContent = result.content ?? ''
-      updateLastMessage((m) => { if (m.role === 'kp') m.content = sanitizeKpResponse(fullContent) })
-    }
-    return fullContent
-  }
-
-  function hasKpAgent(): boolean {
-    return !!(window as unknown as { electronAPI?: { kpInvoke?: unknown } }).electronAPI?.kpInvoke
+    return processToolCallsOrchestrator(toolCalls, buildToolContext())
   }
 
   async function fetchRagContext(query: string): Promise<string> {
@@ -483,8 +422,14 @@ export const useGameStore = defineStore('game', () => {
       const chatMessages = [{ role: 'system', content: systemPrompt }, { role: 'user', content: '请开始游戏，向调查员做开场白。' }]
 
       const fullContent = hasKpAgent()
-        ? await runKpAgentLoop(chatMessages, aiConfig)
-        : await runDirectChat(chatMessages as { role: 'system' | 'user' | 'assistant'; content: string }[], aiConfig)
+        ? await runKpAgentLoopService(chatMessages, aiConfig, {
+            processToolCalls,
+            onStreamChunk: (preview) => updateLastMessage((m) => { if (m.role === 'kp') m.content = sanitizeKpResponse(preview) }),
+            insertMessagesBeforeLast: (msgs) => insertMessagesBeforeLast(msgs as Message[]),
+          })
+        : await runDirectChatService(chatMessages as { role: 'system' | 'user' | 'assistant'; content: string }[], aiConfig, {
+            onStreamChunk: (c) => updateLastMessage((m) => { if (m.role === 'kp') m.content = sanitizeKpResponse(c) }),
+          })
 
       if (fullContent.trim()) {
         kpMemory.value = [...kpMemory.value.slice(-MAX_MEMORY_ENTRIES + 1), sanitizeKpResponse(fullContent)]
@@ -492,7 +437,10 @@ export const useGameStore = defineStore('game', () => {
       updateLastMessage((m) => { if (m.role === 'kp') m.isStreaming = false })
     } catch (e) {
       updateLastMessage((m) => {
-        if (m.role === 'kp') { m.content = '[开场生成失败: ' + (e instanceof Error ? e.message : String(e)) + ']'; m.isStreaming = false }
+        if (m.role === 'kp') {
+          m.content = '[开场生成失败: ' + (e instanceof Error ? e.message : String(e)) + ']'
+          m.isStreaming = false
+        }
       })
     } finally { isSending.value = false }
   }
@@ -526,8 +474,14 @@ export const useGameStore = defineStore('game', () => {
       ]
 
       const fullContent = hasKpAgent()
-        ? await runKpAgentLoop(chatMessages, aiConfig)
-        : await runDirectChat(chatMessages as { role: 'system' | 'user' | 'assistant'; content: string }[], aiConfig)
+        ? await runKpAgentLoopService(chatMessages, aiConfig, {
+            processToolCalls,
+            onStreamChunk: (preview) => updateLastMessage((m) => { if (m.role === 'kp') m.content = sanitizeKpResponse(preview) }),
+            insertMessagesBeforeLast: (msgs) => insertMessagesBeforeLast(msgs as Message[]),
+          })
+        : await runDirectChatService(chatMessages as { role: 'system' | 'user' | 'assistant'; content: string }[], aiConfig, {
+            onStreamChunk: (c) => updateLastMessage((m) => { if (m.role === 'kp') m.content = sanitizeKpResponse(c) }),
+          })
 
       if (fullContent.trim()) {
         kpMemory.value = [...kpMemory.value.slice(-MAX_MEMORY_ENTRIES + 1), sanitizeKpResponse(fullContent)]
@@ -568,6 +522,7 @@ export const useGameStore = defineStore('game', () => {
     updateCharacterMP,
     updateCharacterSAN,
     updateCharacterSkill,
+    updateCharacterLuck,
     requestOpening,
     sendPlayerMessage,
   }

@@ -6,7 +6,7 @@ import { listIndexedStories, type IndexedStory } from '../services/ragService'
 
 const router = useRouter()
 const gameStore = useGameStore()
-const hasElectron = computed(() => !!(window as { electronAPI?: unknown }).electronAPI)
+const hasElectron = computed(() => !!window.electronAPI)
 
 const stories = ref<IndexedStory[]>([])
 const isLoading = ref(false)

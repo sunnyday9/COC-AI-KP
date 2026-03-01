@@ -1,0 +1,17 @@
+[
+  "skill_check",
+  "opposed_check",
+  "san_check",
+  "roll_dice",
+  "adjust_hp",
+  "adjust_san",
+  "adjust_mp",
+  "spend_luck",
+  "transition_scene",
+  "grant_clue",
+  "trigger_insanity",
+  "apply_major_wound",
+  "reset_day",
+  "melee_attack",
+  "ranged_attack"
+]

@@ -14,7 +14,7 @@ export async function getModelOptions(
   provider: string,
   context: FetchContext
 ): Promise<ModelOption[]> {
-  const api = (window as unknown as { electronAPI?: { aiListModels: (p: { provider: string; baseUrl?: string; apiKey?: string }) => Promise<ModelOption[]> } }).electronAPI
+  const api = window.electronAPI
   if (api?.aiListModels) {
     return await api.aiListModels({ provider, baseUrl: context.baseUrl, apiKey: context.apiKey })
   }

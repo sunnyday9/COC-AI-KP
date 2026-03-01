@@ -1,16 +1,9 @@
 import { defineStore } from 'pinia'
 import { ref, computed } from 'vue'
-import type { AIProviderType } from '../services/ai/types'
+import type { AIProviderConfig } from '../services/ai/types'
 import { PRESET_PROVIDERS, CUSTOM_PROVIDERS } from '../services/ai/types'
 
-export interface AIProviderConfig {
-  provider: AIProviderType
-  baseUrl?: string
-  model?: string
-  apiKey?: string
-  temperature?: number
-  maxTokens?: number
-}
+export type { AIProviderConfig }
 
 export interface AppSettings {
   ai: AIProviderConfig
@@ -37,24 +30,29 @@ export const useSettingsStore = defineStore('settings', () => {
   const settings = ref<AppSettings>({ ...defaultSettings })
 
   async function load() {
-    const api = (window as unknown as { electronAPI?: { getSettings: () => Promise<Partial<AppSettings>> } }).electronAPI
+    const api = window.electronAPI
     if (api?.getSettings) {
       const saved = await api.getSettings()
       if (saved && typeof saved === 'object') {
-        const ai = { ...defaultSettings.ai, ...(saved.ai || {}) }
-        if (!ALL_PROVIDER_IDS.has(ai.provider)) {
-          ai.provider = 'openai'
+        const rawAi = saved.ai && typeof saved.ai === 'object' ? saved.ai as Record<string, unknown> : {}
+        const ai: AIProviderConfig = {
+          ...defaultSettings.ai,
+          ...rawAi,
+          provider: ALL_PROVIDER_IDS.has(String(rawAi.provider ?? '')) ? (rawAi.provider as AIProviderConfig['provider']) : 'openai',
+          model: typeof rawAi.model === 'string' ? rawAi.model : defaultSettings.ai.model,
+          baseUrl: typeof rawAi.baseUrl === 'string' ? rawAi.baseUrl : defaultSettings.ai.baseUrl,
+          apiKey: rawAi.apiKey !== undefined ? String(rawAi.apiKey) : defaultSettings.ai.apiKey,
+          temperature: typeof rawAi.temperature === 'number' ? rawAi.temperature : defaultSettings.ai.temperature,
+          maxTokens: typeof rawAi.maxTokens === 'number' ? rawAi.maxTokens : defaultSettings.ai.maxTokens,
         }
-        settings.value = {
-          ai,
-          syncServerUrl: saved.syncServerUrl ?? defaultSettings.syncServerUrl,
-        }
+        const syncServerUrl = typeof saved.syncServerUrl === 'string' ? saved.syncServerUrl : defaultSettings.syncServerUrl
+        settings.value = { ai, syncServerUrl }
       }
     }
   }
 
   async function save() {
-    const api = (window as unknown as { electronAPI?: { setSettings: (s: AppSettings) => Promise<void> } }).electronAPI
+    const api = window.electronAPI
     if (api?.setSettings) {
       await api.setSettings(settings.value)
     }
