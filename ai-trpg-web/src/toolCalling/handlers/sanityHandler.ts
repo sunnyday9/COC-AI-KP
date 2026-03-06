@@ -1,4 +1,10 @@
-import type { ToolHandler, ToolHandlerContext, ToolHandlerResult } from '../types'
+import type {
+  ToolHandler,
+  ToolHandlerContext,
+  ToolHandlerResult,
+  SanCheckResult,
+  InsanityResult,
+} from '../types'
 
 const TOOL_NAMES = ['san_check', 'trigger_insanity', 'adjust_san', 'reset_day'] as const
 
@@ -17,14 +23,14 @@ function handleSanCheck(args: Record<string, unknown>, ctx: ToolHandlerContext):
   }
   ctx.updateCharacterSAN(-sanLost)
   if (sanLost > 0) ctx.addCharacterDailySanLoss(sanLost)
-  const content = JSON.stringify({
+  const payload: SanCheckResult = {
     roll,
     currentSan,
     passed,
     isFumble,
     sanLost,
     lossExpression: lossExpr,
-  })
+  }
   const statusText = isFumble ? '大失败' : passed ? '成功' : '失败'
   const displayMessages: ToolHandlerResult['displayMessages'] = [
     {
@@ -44,7 +50,7 @@ function handleSanCheck(args: Record<string, unknown>, ctx: ToolHandlerContext):
       content: `SAN -${sanLost}`,
     })
   }
-  return { content, displayMessages }
+  return { content: JSON.stringify(payload), displayMessages }
 }
 
 function handleTriggerInsanity(args: Record<string, unknown>, ctx: ToolHandlerContext): ToolHandlerResult {
@@ -90,13 +96,13 @@ function handleTriggerInsanity(args: Record<string, unknown>, ctx: ToolHandlerCo
   if (phobiaAdded && !phobias.includes(phobiaAdded)) phobias.push(phobiaAdded)
   if (maniaAdded && !manias.includes(maniaAdded)) manias.push(maniaAdded)
   ctx.updateCharacterInsanityState(state, phobias, manias)
-  const content = JSON.stringify({
+  const payload: InsanityResult = {
     insanityState: state,
     boutRoll: boutRoll ?? undefined,
     boutText,
     phobiaAdded: phobiaAdded ?? undefined,
     maniaAdded: maniaAdded ?? undefined,
-  })
+  }
   const displayMessages: ToolHandlerResult['displayMessages'] = [
     {
       id: ctx.generateId(),
@@ -105,7 +111,7 @@ function handleTriggerInsanity(args: Record<string, unknown>, ctx: ToolHandlerCo
       content: `疯狂判定: ${state}${boutText ? ` — ${boutText}` : ''}`,
     },
   ]
-  return { content, displayMessages }
+  return { content: JSON.stringify(payload), displayMessages }
 }
 
 export const sanityHandler: ToolHandler = {
@@ -121,7 +127,22 @@ export const sanityHandler: ToolHandler = {
     if (toolName === 'adjust_san') {
       const delta = Number(args.delta ?? 0)
       context.updateCharacterSAN(delta)
-      if (delta < 0) context.addCharacterDailySanLoss(-delta)
+      if (delta < 0) {
+        context.addCharacterDailySanLoss(-delta)
+      } else if (delta > 0) {
+        const c: any = context.characterSheet
+        const derived = c?.derived
+        if (derived) {
+          const mythos = typeof c?.cthulhuMythos === 'number' ? c.cthulhuMythos : 0
+          const baseMax = typeof derived.sanMax === 'number' ? derived.sanMax : 99
+          const maxByMythos = mythos >= 0 && mythos <= 99 ? 99 - mythos : baseMax
+          const currentSan = derived.san
+          if (typeof currentSan === 'number' && currentSan > maxByMythos) {
+            const clampDelta = maxByMythos - currentSan
+            if (clampDelta < 0) context.updateCharacterSAN(clampDelta)
+          }
+        }
+      }
       displayMessages.push({
         id,
         timestamp: ts,

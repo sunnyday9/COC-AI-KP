@@ -412,7 +412,21 @@ export async function buildContext(params) {
  * Health check - always available since this is in-process.
  */
 export function checkHealth() {
-  return { status: 'ok', service: 'rag-embedded' }
+  var dir = getIndexDir()
+  var indexedStories = []
+  try {
+    if (fs.existsSync(dir)) {
+      var files = fs.readdirSync(dir).filter(function (f) { return f.endsWith('.json') })
+      indexedStories = files
+    }
+  } catch (_e) {
+    indexedStories = []
+  }
+  return {
+    status: 'ok',
+    service: 'rag-embedded',
+    indexedStoryCount: indexedStories.length,
+  }
 }
 
 /* ------------------------------------------------------------------ */

@@ -8,8 +8,9 @@
  * Notes:
  * - This is intentionally lightweight and offline-friendly.
  * - OCR on embedded images is environment-dependent (tesseract language assets, CPU, etc),
- *   so we only assert the PDF main text path; OCR presence is logged as best-effort.
+ *   so we only assert the PDF main text path.
  */
+/* eslint-disable no-console */
 const { app, BrowserWindow } = require('electron')
 const path = require('path')
 const fs = require('fs')
@@ -103,22 +104,14 @@ async function main() {
     const text = await call(`window.electronAPI.readStoryForRag(${JSON.stringify(pdfPath)})`)
     assert(typeof text === 'string')
     assert(text.includes('Library') || text.includes('KEY') || text.length > 0)
-    if (text.includes('以下为 PDF 内嵌插图中识别的内容')) {
-      // best-effort OCR signal; do not hard-fail
-      // eslint-disable-next-line no-console
-      console.log('[smoke] OCR block detected')
-    }
   })
 
   const failures = []
   for (const t of results) {
     try {
       await t.fn()
-      // eslint-disable-next-line no-console
-      console.log('[ok]', t.name)
     } catch (e) {
       failures.push({ name: t.name, error: e })
-      // eslint-disable-next-line no-console
       console.error('[fail]', t.name, e && e.message ? e.message : e)
     }
   }
@@ -129,7 +122,6 @@ async function main() {
 }
 
 main().catch((e) => {
-  // eslint-disable-next-line no-console
   console.error('[smoke] fatal', e)
   process.exitCode = 1
   app.quit()

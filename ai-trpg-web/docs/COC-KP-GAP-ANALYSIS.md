@@ -182,7 +182,7 @@
 
 ### 🟡 P1 — 重要功能（显著提升游戏完整性）
 
-#### 2.7 最大 SAN 限制
+#### 2.7 最大 SAN 限制（核心规则 — 已实现）
 
 **规则书引用**：第八章 理智
 
@@ -190,11 +190,14 @@
 - 当克苏鲁神话技能增加时，Max SAN 立即降低
 - 当前 SAN 永不超过 Max SAN
 
-**建议实现**：在角色状态中跟踪 `cthulhuMythos` 技能值，`adjust_san` 中自动 clamp 到 `99 - cthulhuMythos`。
+**实现情况**：
+- 角色状态中已包含 `cthulhuMythos` 字段（见 `COCCharacterSheet` 扩展）。
+- 在 `sanityHandler.adjust_san` 中增加 Max SAN clamp：当 `delta > 0` 且当前 SAN 超过 `99 - cthulhuMythos` 时，自动向下修正到该上限；负向 SAN 变化保持原有行为，仅累加当日 SAN 损失。
+- 在 `src/toolCalling/handlers/__tests__/sanityHandler.spec.ts` 中添加了 Max SAN 行为测试，覆盖「有神话值时的上限约束」「神话值提升导致 Max SAN 降低时的重新 clamp」以及「负向变化不受上限限制」。
 
 ---
 
-#### 2.8 急救 & 医学（First Aid & Medicine）
+#### 2.8 急救 & 医学（First Aid & Medicine，含自然恢复 — 已实现首版）
 
 **规则书引用**：第六章 战斗
 
@@ -208,7 +211,17 @@
 | **自然恢复（轻伤）** | 每天 1 HP | 仅有轻伤时 |
 | **自然恢复（重伤）** | 每周 CON 检定成功 +1D3 HP | 完全卧床+医疗 = +2D3 |
 
-**建议实现**：新增 `first_aid` 和 `medicine` tool，或在 `adjust_hp` 中增加 `healType` 参数以区分治疗方式和相关限制。
+**实现情况**：
+- **工具层**：
+  - 在 `electron/ipc/aiHandlers.cjs` 中新增 `first_aid` 与 `medicine` tool 定义，并通过 `sync-tools`/`toolConsistency` 形成 SSOT。
+  - 在 `combatHandler` 中实现对应 handler：
+    - `first_aid`：受伤且濒死时成功急救，HP +1（不超过 `hpMax`）并将 `isDying` 置为 `false`；满血时仅提示无需急救；可通过参数 `success: false` 表示急救失败，仅输出失败提示。
+    - `medicine`：在医学检定成功（`success: true`）时按 1D3（默认，可由 `healExpr` 覆盖）治疗 HP，结果不超过 `hpMax`；失败或满血时 HP 不变，仅输出提示。
+  - 相关测试位于 `src/toolCalling/handlers/__tests__/healingHandler.spec.ts`，覆盖濒死稳定、失败不变、更高治疗量与满血无效等场景。
+- **自然恢复**：
+  - 在 `src/logic/healingRules.ts` 中新增 `applyNaturalHealing`，按「轻伤每日 +1 HP」「重伤每周 CON 检定成功 +1D3 HP」实现简化版自然恢复逻辑，始终不超过 `hpMax`。
+  - 对应测试位于 `src/logic/__tests__/healingRules.spec.ts`，验证轻伤/重伤多周恢复与上限约束。
+  - 更复杂的卧床疗养加成（如 +2D3）与住院环境修正目前留待后续 Phase 迭代补充。
 
 ---
 
@@ -676,9 +689,9 @@ interface COCCharacterSheetExtensions {
 |------|--------|----------|----------|
 | 技能检定 | ✅ 基本检定、奖励/惩罚骰、孤注一掷、对抗检定 | | |
 | 战斗 | ✅ 基本攻击链、近战一击（melee_attack）、远程一击（ranged_attack）、对抗检定（opposed_check 含奖励/惩罚骰）、即死/重伤/濒死（apply_major_wound）、伤害加值/体格/护甲/武器（角色卡） | | ❌ 先攻、战技、枪械详细规则 |
-| 理智 | ✅ SAN 检定、疯狂系统（trigger_insanity）、恐惧症/躁狂症（简化）、新日重置（reset_day） | | ❌ Max SAN 计算、SAN 恢复、发作表全文案 |
+| 理智 | ✅ SAN 检定、疯狂系统（trigger_insanity）、恐惧症/躁狂症（简化）、新日重置（reset_day）、Max SAN clamp | 部分实现：Max SAN 限制已接入 `adjust_san`，仍缺 SAN 恢复与完整发作表文案 | ❌ SAN 恢复、发作表全文案 |
 | 幸运 | ✅ 属性存在、消耗机制（spend_luck） | | ❌ 恢复机制（幕间掷 1D100） |
-| 治疗 | ✅ 简单 HP 调整 | | ❌ 急救/医学结构化规则、自然恢复、重伤恢复 |
+| 治疗 | ✅ 简单 HP 调整；已实现 `first_aid` / `medicine` tool 及自然恢复逻辑（applyNaturalHealing） | 部分实现：基础治疗与自然恢复可用，重伤长期恢复与住院/卧床修正仍可进一步细化 | ❌ 重伤长期恢复加成、住院/卧床等高级治疗细节 |
 | 魔法 | ✅ MP 跟踪 | | ❌ 施法、典籍、法术学习 |
 | 追逐 | | | ❌ 整个子系统 |
 | 角色成长 | ✅ 角色创建 | | ❌ 幕间成长、技能标记 |

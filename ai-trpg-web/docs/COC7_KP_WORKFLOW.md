@@ -201,3 +201,66 @@ flowchart LR
 - **Embedding 全面化**：引入中文优先的 embedding 模型作为默认（离线或内置下载），并允许用户配置自定义 embedding API。  
 - **记忆策略**：长期摘要可拆成“事实表（facts）+ 摘要（summary）”，并在工具层对关键事件进行结构化写入，提高一致性与可测试性。
 
+---
+
+## 9. 安全加固与架构修复记录（按日期）
+
+### 2026-03-06：P0 安全加固（IPC 路径与存档 ID）
+
+背景：本项目采用 Electron + `contextBridge` 暴露 `window.electronAPI`。一旦渲染进程发生 XSS/依赖污染，过宽的 IPC 参数（任意路径、任意 saveId）会被放大为“本地文件读写/删除”能力。
+
+本次修复目标：**不改变现有功能与调用方式**，仅在主进程侧为敏感 IPC 增加白名单与校验，阻断路径穿越与越权访问。
+
+#### 1) 修复：存档 `saveId` 路径穿越风险
+
+- **问题点**：`electron/ipc/saveHandlers.cjs` 将 `saveId` 直接拼到 `${saveId}.json` 并 `path.join` 到 `userData/saves`，若 `saveId` 含 `../`、`..\\` 等可产生越权路径。
+- **修复策略**：
+  - 对 `saveId` 增加严格校验（拒绝 `..`、分隔符、控制字符、Windows 非法文件名字符、尾随点/空格、过长字符串）。
+  - 生成文件路径时使用“目录内解析 + 目录内断言”，确保最终落点仍在 `userData/saves` 内。
+- **实现位置**：
+  - 新增：`electron/ipc/pathSafety.cjs`（共享校验工具）
+  - 更新：`electron/ipc/saveHandlers.cjs`（读写均校验 + 目录内解析）
+- **验证**：
+  - 新增单测：`electron/ipc/__tests__/pathSafety.spec.ts`
+  - `npm --prefix ai-trpg-web run test:run` 全部通过（含新增测试）
+
+#### 2) 修复：文件相关 IPC 接收任意路径的问题（Scripts/Stories）
+
+- **问题点**：`electron/ipc/fileHandlers.cjs` 的 `file:readScript/saveScript/deleteScript/readStory/readStoryForRag/deleteStory` 直接使用 renderer 传入的 `filePath` 进行文件系统操作。
+- **修复策略**：
+  - **Scripts**：仅允许访问项目内 `ai-trpg-web/scripts` 目录（由 `file:listScripts/importScript/saveScriptToLibrary` 产生的路径）。
+  - **Stories**：仅允许访问 `userData/stories` 目录（由 `file:listStories/importStory` 产生的路径）。
+  - 对传入路径做“目录内断言”（`path.resolve` + `path.relative`），拒绝越界路径。
+- **实现位置**：
+  - 更新：`electron/ipc/fileHandlers.cjs`（对上述 IPC 全部增加 `assertPathInDir`）
+- **验证**：
+  - 运行既有单测与集成测试用例：`npm --prefix ai-trpg-web run test:run` 全部通过
+
+### 2026-03-06：P0 一致性加固（工具清单 SSOT 的 CI 硬校验）
+
+背景：工具名同时存在于“后端工具 schema（提供给模型）”、“前端工具名单（执行路由）”、“前端各 handler（实际实现）”等多个位置；若新增/改名只改了一处，运行期会出现 unknown tool 或 Graph 强制工具失败等问题。
+
+本次修复目标：把一致性问题从“运行期 warn”升级为**测试期硬失败**，确保任何不一致都能在 CI/本地测试阶段被阻断。
+
+- **实现**：新增一致性单测 `src/toolCalling/__tests__/toolConsistency.spec.ts`
+  - 对比三方集合是否完全一致：
+    - `electron/ipc/aiHandlers.cjs` 导出的 `COC_KP_TOOLS`
+    - `src/toolCalling/cocToolNames.json`
+    - `src/toolCalling/handlers/*` 的 `toolNames` 合集
+- **验证**：`npm --prefix ai-trpg-web run test:run` 全部通过；未来任何一处遗漏更新都会导致该测试失败。
+
+### 2026-03-06：P0 防御性增强（符号链接逃逸 + PDF OCR 限流）
+
+为进一步降低“目录内符号链接/junction 指向目录外”导致的越权风险，并避免恶意/超大 PDF 触发主进程卡死，本次补充两项防御性增强（对正常使用无影响，极端输入时自动降级）。
+
+- **符号链接/junction 逃逸防护（read/delete + write parent）**
+  - `electron/ipc/pathSafety.cjs` 新增异步校验：对已存在路径尝试 `realpath`，并断言真实路径仍在允许目录内。
+  - `electron/ipc/fileHandlers.cjs`：
+    - `read*`/`delete*` 使用 `assertRealPathInDir`
+    - `saveScript` 使用 `assertParentRealPathInDir`（校验父目录 realpath）
+- **PDF OCR 限流（防本地 DoS）**
+  - `file:readStoryForRag` 增加硬阈值：超大 PDF 仅返回正文（跳过 OCR）
+  - 限制 OCR 图片数量与单张图片大小；超过则跳过该图片
+- **验证**：`npm --prefix ai-trpg-web run test:run` 全部通过。
+
+

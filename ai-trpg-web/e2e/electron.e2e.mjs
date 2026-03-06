@@ -36,7 +36,7 @@ async function main() {
     const page = await app.firstWindow()
     page.on('pageerror', (e) => console.error('[E2E][pageerror]', e))
     page.on('console', (m) => {
-      if (m.type() === 'error') console.log('[E2E][console:error]', m.text())
+      if (m.type() === 'error') console.error('[E2E][console:error]', m.text())
     })
     await page.waitForLoadState('domcontentloaded')
 
@@ -75,7 +75,6 @@ async function main() {
       if (!api?.ragListStories) return []
       return await api.ragListStories()
     })
-    console.log('[E2E] indexedStories', indexed)
     assert(Array.isArray(indexed) && indexed.length > 0, 'No indexed stories returned by ragListStories()')
 
     // Start game from HomeView
@@ -137,8 +136,6 @@ async function main() {
     await page.getByRole('button', { name: /读档/ }).click()
     // Save list may show id first, then meta name; accept either
     await page.locator('div[class*="rounded-lg"] button').filter({ hasText: /E2E 存档 1|save_\d+/ }).first().waitFor({ timeout: 15_000 })
-
-    console.log('[E2E] PASS')
   } finally {
     await app.close()
     try { await fs.rm(userDataDir, { recursive: true, force: true }) } catch (_e) {}

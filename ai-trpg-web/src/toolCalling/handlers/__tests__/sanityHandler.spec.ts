@@ -271,6 +271,91 @@ describe('sanityHandler adjust_san', () => {
   })
 })
 
+describe('sanityHandler Max SAN clamp', () => {
+  it('当 cthulhuMythos 存在时，SAN 提升不会超过 Max SAN = 99 - cthulhuMythos', () => {
+    let sanDelta = 0
+    const sheet: any = {
+      derived: { san: 95, sanMax: 99 },
+      cthulhuMythos: 10,
+      attributes: {},
+      skills: {},
+      occupationSkillKeys: [],
+      personalInterestKeys: [],
+      playerName: '',
+      occupationId: '',
+      occupationName: '',
+    }
+    const ctx = createMockContext({
+      characterSheet: sheet,
+      onUpdateSAN: (d) => {
+        sanDelta += d
+        sheet.derived.san += d
+      },
+    })
+    sanityHandler.handle('adjust_san', { delta: 10 }, ctx)
+    // Max SAN = 99 - 10 = 89，初始 95，应被 clamp 到 89
+    expect(sheet.derived.san).toBe(89)
+  })
+
+  it('当 cthulhuMythos 提升导致 Max SAN 下降时，当前 SAN 被重新 clamp 到新的 Max SAN', () => {
+    let sanDelta = 0
+    const sheet: any = {
+      derived: { san: 90, sanMax: 99 },
+      cthulhuMythos: 0,
+      attributes: {},
+      skills: {},
+      occupationSkillKeys: [],
+      personalInterestKeys: [],
+      playerName: '',
+      occupationId: '',
+      occupationName: '',
+    }
+    const ctx = createMockContext({
+      characterSheet: sheet,
+      onUpdateSAN: (d) => {
+        sanDelta += d
+        sheet.derived.san += d
+      },
+    })
+    // 模拟神话值变为 20 之后再进行一次正向 SAN 调整触发 clamp
+    sheet.cthulhuMythos = 20
+    sanityHandler.handle('adjust_san', { delta: 1 }, ctx)
+    // 新 Max SAN = 99 - 20 = 79
+    expect(sheet.derived.san).toBe(79)
+    expect(sanDelta).toBeLessThanOrEqual(0)
+  })
+
+  it('负向 SAN 变化（delta<0）时不受 Max SAN 限制，按原规则扣减', () => {
+    let sanDelta = 0
+    let daily = 0
+    const sheet: any = {
+      derived: { san: 50, sanMax: 99 },
+      cthulhuMythos: 40,
+      attributes: {},
+      skills: {},
+      occupationSkillKeys: [],
+      personalInterestKeys: [],
+      playerName: '',
+      occupationId: '',
+      occupationName: '',
+    }
+    const ctx = createMockContext({
+      characterSheet: sheet,
+      onUpdateSAN: (d) => {
+        sanDelta += d
+        sheet.derived.san += d
+      },
+      onAddDailySanLoss: (a) => {
+        daily += a
+      },
+    })
+    sanityHandler.handle('adjust_san', { delta: -7 }, ctx)
+    expect(sheet.derived.san).toBe(43)
+    expect(sanDelta).toBe(-7)
+    expect(daily).toBe(7)
+  })
+})
+
 describe('sanityHandler reset_day', () => {
   it('调用 resetCharacterDailySanLoss', () => {
     let reset = false

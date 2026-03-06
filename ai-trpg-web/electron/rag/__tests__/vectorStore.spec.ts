@@ -87,5 +87,15 @@ describe('electron/rag/vectorStore', () => {
     expect(ctx.context).toContain('## 剧本相关情报')
     expect(ctx.context).toContain('### [1]')
   })
+
+  it('checkHealth reports indexedStoryCount', async () => {
+    const rag = await import('../vectorStore.mjs')
+    const storyId = 'Y'
+    await rag.indexChunks(storyId, [{ id: 'c', content: '测试内容', type: 'rule', metadata: {} }], {}, {})
+    const health = rag.checkHealth()
+    expect(health.status).toBe('ok')
+    expect(typeof health.indexedStoryCount).toBe('number')
+    expect(health.indexedStoryCount).toBeGreaterThanOrEqual(1)
+  })
 })
 

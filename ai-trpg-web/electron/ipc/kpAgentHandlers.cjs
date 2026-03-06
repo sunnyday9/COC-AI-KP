@@ -3,6 +3,7 @@ const path = require('path')
 const { pathToFileURL } = require('url')
 const { readSettings } = require('./settingsHandlers.cjs')
 const { invokeChat, COC_KP_TOOLS } = require('./aiHandlers.cjs')
+const { logError, logWarn } = require('../logging.cjs')
 
 let invokeKPAgentPromise = null
 
@@ -117,12 +118,13 @@ function registerKPAgentHandlers() {
         return { content, toolCalls }
       }
     } catch (err) {
-      console.error('[kp:invoke] Graph failed, falling back to direct LLM:', err?.message || err)
+      logError('KP', 'Graph failed in kp:invoke, falling back to direct LLM', { error: err?.message || String(err) })
     }
 
     try {
       return await directFallback(messages, pProvider, pModel, pBaseUrl, pApiKey, pTemp, pMax)
     } catch (err2) {
+      logError('KP', 'directFallback in kp:invoke failed', { error: err2?.message || String(err2) })
       return { content: '[KP 回复生成失败: ' + (err2?.message || String(err2)) + ']' }
     }
   })
@@ -146,12 +148,13 @@ function registerKPAgentHandlers() {
         content = result.content ?? ''
         toolCalls = result.toolCalls
       } catch (err) {
-        console.error('[kp:invokeStream] Graph failed, falling back to direct LLM:', err?.message || err)
+        logError('KP', 'Graph failed in kp:invokeStream, falling back to direct LLM', { error: err?.message || String(err) })
         try {
           const fallback = await directFallback(messages, pProvider, pModel, pBaseUrl, pApiKey, pTemp, pMax)
           content = fallback.content ?? ''
           toolCalls = fallback.toolCalls
         } catch (err2) {
+          logError('KP', 'directFallback in kp:invokeStream failed', { error: err2 instanceof Error ? err2.message : String(err2) })
           event.sender.send('kp:stream', { streamId, type: 'error', error: err2 instanceof Error ? err2.message : String(err2) })
           return
         }

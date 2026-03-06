@@ -48,7 +48,15 @@ async function buildGetEmbedding() {
 function registerRAGHandlers() {
   ipcMain.handle('rag:health', async () => {
     const rag = await getRagModule()
-    return rag.checkHealth()
+    const base = rag.checkHealth()
+    const settings = await readSettings()
+    const ragSettings = settings?.rag || {}
+    return {
+      ...base,
+      embeddingEnabled: !!ragSettings.useEmbeddings,
+      embeddingProvider: ragSettings.provider || 'builtin',
+      embeddingModel: ragSettings.model || 'text-embedding-3-small',
+    }
   })
 
   ipcMain.handle('rag:index', async (_, params) => {

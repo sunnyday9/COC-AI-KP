@@ -16,6 +16,57 @@ export interface ToolHandlerResult {
   displayMessages: Message[]
 }
 
+// Structured result types for common tools (handler JSON content).
+
+export interface MeleeAttackResult {
+  winner: 'A' | 'B' | 'tie'
+  winnerName: string | null
+  damageDealt: number
+  investigatorTookDamage: boolean
+}
+
+export interface RangedAttackResult {
+  roll: number
+  threshold: number
+  hit: boolean
+  result: string
+  damageDealt: number
+  targetIsInvestigator: boolean
+}
+
+export interface MajorWoundResult {
+  instantDeath: boolean
+  hasMajorWound: boolean
+  isDying: boolean
+  unconscious: boolean
+}
+
+export interface FirstAidResult {
+  healed: number
+  stabilized: boolean
+}
+
+export interface MedicineResult {
+  healed: number
+}
+
+export interface SanCheckResult {
+  roll: number
+  currentSan: number
+  passed: boolean
+  isFumble: boolean
+  sanLost: number
+  lossExpression: string
+}
+
+export interface InsanityResult {
+  insanityState: 'normal' | 'temporary' | 'indefinite' | 'permanent'
+  boutRoll?: number
+  boutText: string
+  phobiaAdded?: string
+  maniaAdded?: string
+}
+
 /** Resolve skill check result and threshold for a single roll. */
 export type ResolveSkillCheckFn = (
   roll: number,

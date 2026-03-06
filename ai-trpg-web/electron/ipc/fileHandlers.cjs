@@ -2,6 +2,7 @@ const { ipcMain, app, dialog } = require('electron')
 const fs = require('fs').promises
 const path = require('path')
 const pdfParse = require('pdf-parse')
+const { assertRealPathInDir, assertParentRealPathInDir } = require('./pathSafety.cjs')
 
 // 将剧本统一存放到项目根目录的 scripts 目录（ai-trpg-web/scripts）
 // __dirname 指向 electron/ipc，所以需要跳两级到项目根再进入 scripts
@@ -44,7 +45,10 @@ function registerFileHandlers() {
   ipcMain.handle('file:saveScriptToLibrary', async (_, filename, content) => {
     const dir = await ensureScriptsDir()
     // 仅替换 Windows 非法文件名字符，尽量保留原始名称（含中文、空格等）
-    const safeName = (filename || 'script.json').replace(/[<>:"/\\|?*]+/g, '_')
+    let safeName = (filename || 'script.json').replace(/[<>:"/\\|?*]+/g, '_')
+    safeName = safeName.replace(/[. ]+$/g, '') || 'script.json'
+    const base = path.parse(safeName).name.toUpperCase()
+    if (/^(CON|PRN|AUX|NUL|COM[1-9]|LPT[1-9])$/.test(base)) safeName = '_' + safeName
     const filePath = path.join(dir, safeName)
     await fs.mkdir(dir, { recursive: true })
     await fs.writeFile(filePath, content, 'utf-8')
@@ -52,18 +56,24 @@ function registerFileHandlers() {
   })
 
   ipcMain.handle('file:readScript', async (_, filePath) => {
-    const content = await fs.readFile(filePath, 'utf-8')
+    const dir = getScriptsPath()
+    const safePath = await assertRealPathInDir(dir, filePath, 'script path')
+    const content = await fs.readFile(safePath, 'utf-8')
     return content
   })
 
   ipcMain.handle('file:saveScript', async (_, filePath, content) => {
-    await fs.mkdir(path.dirname(filePath), { recursive: true })
-    await fs.writeFile(filePath, content, 'utf-8')
+    const dir = getScriptsPath()
+    const safePath = await assertParentRealPathInDir(dir, filePath, 'script path')
+    await fs.mkdir(path.dirname(safePath), { recursive: true })
+    await fs.writeFile(safePath, content, 'utf-8')
     return undefined
   })
 
   ipcMain.handle('file:deleteScript', async (_, filePath) => {
-    await fs.unlink(filePath)
+    const dir = getScriptsPath()
+    const safePath = await assertRealPathInDir(dir, filePath, 'script path')
+    await fs.unlink(safePath)
     return undefined
   })
 
@@ -109,36 +119,45 @@ function registerFileHandlers() {
   })
 
   ipcMain.handle('file:readStory', async (_, filePath) => {
-    const ext = path.extname(filePath).toLowerCase()
+    const dir = getStoriesPath()
+    const safePath = await assertRealPathInDir(dir, filePath, 'story path')
+    const ext = path.extname(safePath).toLowerCase()
     if (ext === '.pdf') {
       // PDF 文件：解析为文本
-      const dataBuffer = await fs.readFile(filePath)
+      const dataBuffer = await fs.readFile(safePath)
       const pdfData = await pdfParse(dataBuffer)
       return pdfData.text
     } else {
       // 文本文件：直接读取
-      const content = await fs.readFile(filePath, 'utf-8')
+      const content = await fs.readFile(safePath, 'utf-8')
       return content
     }
   })
 
   // 专用于 RAG 索引：正文由 pdf-parse 提取；仅对 PDF 内嵌图片做 OCR，避免与正文重复
   ipcMain.handle('file:readStoryForRag', async (_, filePath) => {
-    const ext = path.extname(filePath).toLowerCase()
+    const dir = getStoriesPath()
+    const safePath = await assertRealPathInDir(dir, filePath, 'story path')
+    const ext = path.extname(safePath).toLowerCase()
     if (ext !== '.pdf') {
-      const content = await fs.readFile(filePath, 'utf-8')
+      const content = await fs.readFile(safePath, 'utf-8')
       return content
     }
-    const dataBuffer = await fs.readFile(filePath)
+    const dataBuffer = await fs.readFile(safePath)
     const pdfData = await pdfParse(dataBuffer)
     let mainText = (pdfData.text || '').trim()
     try {
+      // Defensive limits: avoid main-process stalls on huge or image-heavy PDFs.
+      const stat = await fs.stat(safePath).catch(() => null)
+      if (stat && stat.size > 50 * 1024 * 1024) return mainText
+
       const { PDFDocument, PDFRawStream, PDFName, decodePDFRawStream } = await import('pdf-lib')
       const Tesseract = (await import('tesseract.js')).default
       const doc = await PDFDocument.load(new Uint8Array(dataBuffer))
       const entries = doc.context.enumerateIndirectObjects()
       const imageBuffers = []
       for (const [, obj] of entries) {
+        if (imageBuffers.length >= 8) break
         if (!(obj instanceof PDFRawStream)) continue
         const dict = obj.dict
         const subtypeRef = dict.get(PDFName.of('Subtype'))
@@ -160,6 +179,7 @@ function registerFileHandlers() {
           }
         }
         const buf = Buffer.from(bytes)
+        if (buf.length > 5 * 1024 * 1024) continue
         const isJpeg = buf.length >= 2 && buf[0] === 0xff && buf[1] === 0xd8
         const isPng = buf.length >= 4 && buf[0] === 0x89 && buf[1] === 0x50 && buf[2] === 0x4e && buf[3] === 0x47
         if (isJpeg || isPng) imageBuffers.push(buf)
@@ -218,7 +238,9 @@ function registerFileHandlers() {
   })
 
   ipcMain.handle('file:deleteStory', async (_, filePath) => {
-    await fs.unlink(filePath)
+    const dir = getStoriesPath()
+    const safePath = await assertRealPathInDir(dir, filePath, 'story path')
+    await fs.unlink(safePath)
     return undefined
   })
 }

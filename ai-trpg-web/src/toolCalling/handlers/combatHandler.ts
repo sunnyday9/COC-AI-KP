@@ -1,6 +1,15 @@
-import type { ToolHandler, ToolHandlerContext, ToolHandlerResult } from '../types'
+import type {
+  ToolHandler,
+  ToolHandlerContext,
+  ToolHandlerResult,
+  MeleeAttackResult,
+  RangedAttackResult,
+  MajorWoundResult,
+  FirstAidResult,
+  MedicineResult,
+} from '../types'
 
-const TOOL_NAMES = ['melee_attack', 'ranged_attack', 'adjust_hp', 'apply_major_wound'] as const
+const TOOL_NAMES = ['melee_attack', 'ranged_attack', 'adjust_hp', 'apply_major_wound', 'first_aid', 'medicine'] as const
 
 function handleMeleeAttack(args: Record<string, unknown>, ctx: ToolHandlerContext): ToolHandlerResult {
   const sideAName = String(args.sideAName ?? 'A')
@@ -80,12 +89,12 @@ function handleMeleeAttack(args: Record<string, unknown>, ctx: ToolHandlerContex
     }
   }
 
-  const content = JSON.stringify({
+  const payload: MeleeAttackResult = {
     winner,
     winnerName: winner === 'A' ? sideAName : winner === 'B' ? sideBName : null,
     damageDealt,
     investigatorTookDamage: investigatorIsLoser && damageDealt > 0,
-  })
+  }
   const winnerName = winner === 'A' ? sideAName : winner === 'B' ? sideBName : '平局'
   displayMessages.push({
     id: ctx.generateId(),
@@ -95,7 +104,7 @@ function handleMeleeAttack(args: Record<string, unknown>, ctx: ToolHandlerContex
     content: `近战: ${sideAName} vs ${sideBName} → ${winnerName}胜${damageDealt > 0 ? `，造成 ${damageDealt} 点伤害` : ''}`,
     result: { roll: rollA, target: sideAValue },
   })
-  return { content, displayMessages }
+  return { content: JSON.stringify(payload), displayMessages }
 }
 
 function handleRangedAttack(args: Record<string, unknown>, ctx: ToolHandlerContext): ToolHandlerResult {
@@ -145,14 +154,14 @@ function handleRangedAttack(args: Record<string, unknown>, ctx: ToolHandlerConte
     }
   }
 
-  const content = JSON.stringify({
+  const payload: RangedAttackResult = {
     roll,
     threshold,
     hit,
     result: checkResult,
     damageDealt,
     targetIsInvestigator: targetIsInvestigator && damageDealt > 0,
-  })
+  }
   const hitText = hit ? '命中' : '未中'
   displayMessages.push({
     id: ctx.generateId(),
@@ -162,7 +171,7 @@ function handleRangedAttack(args: Record<string, unknown>, ctx: ToolHandlerConte
     content: `远程: ${skillName}检定 d100:${roll} → ${hitText}${damageDealt > 0 ? `，造成 ${damageDealt} 点伤害` : ''}`,
     result: { roll, target: threshold },
   })
-  return { content, displayMessages }
+  return { content: JSON.stringify(payload), displayMessages }
 }
 
 export const combatHandler: ToolHandler = {
@@ -207,12 +216,12 @@ export const combatHandler: ToolHandler = {
         unconscious = conRoll > con
       }
       if (hpAfter <= 0 && (isMajor || instantDeath)) context.setCharacterDying(true)
-      const content = JSON.stringify({
+      const payload: MajorWoundResult = {
         instantDeath,
         hasMajorWound: isMajor || instantDeath,
         isDying: hpAfter <= 0 && (isMajor || instantDeath),
         unconscious,
-      })
+      }
       displayMessages.push({
         id,
         timestamp: ts,
@@ -221,9 +230,124 @@ export const combatHandler: ToolHandler = {
           ? '即死（单次伤害超过 HP 最大值）'
           : `重伤判定: ${isMajor ? '重伤' : '未达重伤'}${hpAfter <= 0 && isMajor ? '，濒死' : ''}${unconscious ? '，CON检定失败昏迷' : ''}`,
       })
-      return { content, displayMessages }
+      return { content: JSON.stringify(payload), displayMessages }
     }
+
+    if (toolName === 'first_aid') return handleFirstAid(args, context)
+    if (toolName === 'medicine') return handleMedicine(args, context)
 
     return { content: 'error: unknown tool', displayMessages: [] }
   },
+}
+
+function handleFirstAid(args: Record<string, unknown>, ctx: ToolHandlerContext): ToolHandlerResult {
+  const c = ctx.characterSheet
+  const displayMessages: ToolHandlerResult['displayMessages'] = []
+  const id = ctx.generateId()
+  const ts = Date.now()
+
+  if (!c || !c.derived) {
+    const content: FirstAidResult = { healed: 0, stabilized: false }
+    return { content: JSON.stringify(content), displayMessages }
+  }
+
+  const hp = c.derived.hp
+  const hpMax = c.derived.hpMax
+  const isDying = !!c.isDying
+
+  const success = args.success !== false
+
+  if (hp >= hpMax) {
+    displayMessages.push({
+      id,
+      timestamp: ts,
+      role: 'system',
+      content: 'HP 已满，无需急救',
+    })
+    const content: FirstAidResult = { healed: 0, stabilized: false }
+    return { content: JSON.stringify(content), displayMessages }
+  }
+
+  if (!success) {
+    displayMessages.push({
+      id,
+      timestamp: ts,
+      role: 'system',
+      content: '急救失败，伤势未见好转',
+    })
+    const content: FirstAidResult = { healed: 0, stabilized: false }
+    return { content: JSON.stringify(content), displayMessages }
+  }
+
+  const healed = Math.min(1, hpMax - hp)
+  if (healed > 0) ctx.updateCharacterHP(healed)
+  let stabilized = false
+  if (isDying && healed > 0) {
+    ctx.setCharacterDying(false)
+    stabilized = true
+  }
+
+  displayMessages.push({
+    id,
+    timestamp: ts,
+    role: 'system',
+    content: `急救成功，HP +${healed}${stabilized ? '，调查员从濒死状态稳定为重伤' : ''}`,
+  })
+
+  const content: FirstAidResult = { healed, stabilized }
+  return { content: JSON.stringify(content), displayMessages }
+}
+
+function handleMedicine(args: Record<string, unknown>, ctx: ToolHandlerContext): ToolHandlerResult {
+  const c = ctx.characterSheet
+  const displayMessages: ToolHandlerResult['displayMessages'] = []
+  const id = ctx.generateId()
+  const ts = Date.now()
+
+  if (!c || !c.derived) {
+    const content: MedicineResult = { healed: 0 }
+    return { content: JSON.stringify(content), displayMessages }
+  }
+
+  const hp = c.derived.hp
+  const hpMax = c.derived.hpMax
+  const success = !!args.success
+  const healExpr = String(args.healExpr ?? '1d3')
+
+  if (hp >= hpMax) {
+    displayMessages.push({
+      id,
+      timestamp: ts,
+      role: 'system',
+      content: 'HP 已满，无需医学治疗',
+    })
+    const content: MedicineResult = { healed: 0 }
+    return { content: JSON.stringify(content), displayMessages }
+  }
+
+  if (!success) {
+    displayMessages.push({
+      id,
+      timestamp: ts,
+      role: 'system',
+      content: '医学检定失败，未能改善伤势',
+    })
+    const content: MedicineResult = { healed: 0 }
+    return { content: JSON.stringify(content), displayMessages }
+  }
+
+  const rawHeal = Math.max(0, ctx.parseDiceExpr(healExpr))
+  const canHeal = Math.max(0, hpMax - hp)
+  const healed = Math.min(rawHeal, canHeal)
+  if (healed > 0) ctx.updateCharacterHP(healed)
+
+  displayMessages.push({
+    id,
+    timestamp: ts,
+    role: 'system',
+    content: `医学治疗成功，HP +${healed}`,
+  })
+
+  const content: MedicineResult = { healed }
+  return { content: JSON.stringify(content), displayMessages }
 }

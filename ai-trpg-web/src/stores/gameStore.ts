@@ -1,5 +1,5 @@
 import { defineStore } from 'pinia'
-import { ref, toRaw } from 'vue'
+import { ref } from 'vue'
 import type { Message } from '../types/game'
 import type { GamePhase, COCCharacterSheet } from '../types/character'
 import type { StoryContext } from '../types/storyContext'
@@ -18,19 +18,15 @@ import { rollD } from '../services/diceService'
 import { getSkillName } from '../data/coc7'
 import { useSettingsStore } from './settingsStore'
 import { processToolCalls as processToolCallsOrchestrator } from '../toolCalling'
-import type { ToolHandlerContext } from '../toolCalling'
 import { summarizeLongTerm } from '../services/memoryService'
+import { buildToolContext } from '../services/toolContextFactory'
+import { buildOpeningPrompt, buildTurnPrompt, buildCharacterContext, buildMemoryBlock, buildRecentTurnsBlock, type PromptState } from '../services/kpPromptService'
+import { SAVE_VERSION, writeSaveSnapshot, readSaveSnapshot, listSaveIds, readSaveMeta } from '../services/saveService'
 
 function generateId(): string {
   return 'msg_' + Date.now() + '_' + Math.random().toString(36).slice(2, 9)
 }
 
-/** Number of recent player+KP messages sent to the KP each turn (sliding window). */
-const CONVERSATION_WINDOW = 18
-const MAX_MEMORY_ENTRIES = 12
-/** Number of recent turns (player + KP pair) in the "recent turns" compact block. */
-const RECENT_TURNS_COUNT = 5
-const RECENT_TURN_ENTRY_LEN = 120
 /** Run long-term summarization every N player turns. */
 const LONG_TERM_SUMMARY_EVERY_N_TURNS = 10
 /** Number of recent messages to include in long-term summarization input. */
@@ -55,38 +51,17 @@ function sanitizeKpResponse(content: string): string {
   return out.replace(/\n{3,}/g, '\n\n').trim()
 }
 
-function buildMemoryBlock(entries: string[]): string {
-  if (entries.length === 0) return ''
-  const lines = entries.slice(-MAX_MEMORY_ENTRIES).map((s) => s.trim()).filter(Boolean)
-  return `\n## 记忆：你（守密人）在本局已说过的内容\n以下是你已经向调查员表述过的内容，请避免用相同或高度相似的措辞重复。每次回应请用新的表述方式推进剧情。\n${lines.map((t) => `- ${t}`).join('\n')}\n`
-}
-
-/** Build a compact "recent turns" block (player + KP pairs) for dense short-term context. */
-function buildRecentTurnsBlock(msgs: Message[], maxTurns: number = RECENT_TURNS_COUNT): string {
-  const filtered = msgs.filter((m): m is Message => (m.role === 'kp' || m.role === 'player') && !(m.role === 'kp' && (m as { isStreaming?: boolean }).isStreaming))
-  if (filtered.length === 0) return ''
-  const pairs: string[] = []
-  let i = filtered.length - 1
-  while (i >= 0 && pairs.length < maxTurns) {
-    const kp = filtered[i]
-    if (!kp || kp.role !== 'kp') {
-      i--
-      continue
-    }
-    const kpContent = ('content' in kp ? String(kp.content) : '').trim().slice(0, RECENT_TURN_ENTRY_LEN) + (('content' in kp ? String(kp.content) : '').length > RECENT_TURN_ENTRY_LEN ? '…' : '')
-    i--
-    const playerMsg = i >= 0 ? filtered[i] : undefined
-    if (playerMsg && playerMsg.role === 'player') {
-      const playerContent = ('content' in playerMsg ? String(playerMsg.content) : '').trim().slice(0, RECENT_TURN_ENTRY_LEN) + (('content' in playerMsg ? String(playerMsg.content) : '').length > RECENT_TURN_ENTRY_LEN ? '…' : '')
-      const name = 'playerName' in playerMsg ? playerMsg.playerName : '调查员'
-      pairs.unshift(`玩家(${name}): ${playerContent} → 守密人: ${kpContent}`)
-      i--
-    } else {
-      pairs.unshift(`守密人: ${kpContent}`)
-    }
+function toPromptState(): PromptState {
+  return {
+    storyName: storyName.value,
+    currentScene: currentScene.value,
+    cluesObtained: cluesObtained.value,
+    messages: messages.value,
+    kpMemory: kpMemory.value,
+    longTermSummary: longTermSummary.value,
+    playerName: playerName.value,
+    characterSheet: characterSheet.value,
   }
-  if (pairs.length === 0) return ''
-  return `\n## 最近几轮\n${pairs.map((p) => `- ${p}`).join('\n')}\n`
 }
 
 export const useGameStore = defineStore('game', () => {
@@ -250,7 +225,8 @@ export const useGameStore = defineStore('game', () => {
   function updateCharacterSkill(skillId: string, newValue: number) {
     const c = characterSheet.value
     if (!c?.skills) return
-    c.skills[skillId] = Math.max(0, Math.min(99, newValue))
+    const nextSkills = { ...c.skills, [skillId]: Math.max(0, Math.min(99, newValue)) }
+    characterSheet.value = { ...c, skills: nextSkills }
   }
 
   function updateCharacterLuck(delta: number) {
@@ -309,157 +285,15 @@ export const useGameStore = defineStore('game', () => {
     if (last) updater(last)
   }
 
-  /** Build character status context (always available without RAG). */
   function buildCharacterContext(): string {
-    const parts: string[] = []
-    const char = characterSheet.value
-    if (char) {
-      const d = char.derived ?? { hp: 0, hpMax: 0, mp: 0, mpMax: 0, san: 0, sanMax: 0 }
-      parts.push(`## 调查员: ${char.playerName} (${char.occupationName})`)
-      parts.push(`HP ${d.hp}/${d.hpMax} MP ${d.mp}/${d.mpMax} SAN ${d.san}/${d.sanMax}`)
-      if (char.damageBonus != null || char.build != null) parts.push(`伤害加值: ${char.damageBonus ?? '-'} 体格: ${char.build ?? '-'}`)
-      if (char.armor != null && char.armor > 0) parts.push(`护甲: ${char.armor}`)
-      if (char.weapons?.length) parts.push('武器: ' + char.weapons.map((w) => w.name + (w.damage ? ` ${w.damage}` : '')).join(', '))
-      if (char.insanityState && char.insanityState !== 'normal') parts.push(`疯狂状态: ${char.insanityState}`)
-      if (char.phobias?.length) parts.push(`恐惧症: ${char.phobias.join(', ')}`)
-      if (char.manias?.length) parts.push(`躁狂症: ${char.manias.join(', ')}`)
-      if (char.hasMajorWound) parts.push('重伤')
-      if (char.isDying) parts.push('濒死')
-      parts.push(`属性: STR ${char.attributes.str} CON ${char.attributes.con} SIZ ${char.attributes.siz} DEX ${char.attributes.dex} APP ${char.attributes.app} INT ${char.attributes.int} POW ${char.attributes.pow} EDU ${char.attributes.edu} Luck ${char.attributes.luck}`)
-      const skillLines = Object.entries(char.skills)
-        .filter(([, v]) => v > 0)
-        .map(([k, v]) => `${getSkillName(k)}: ${v}%`)
-      if (skillLines.length) parts.push('技能: ' + skillLines.join(', '))
-    }
-    if (storyName.value) parts.push(`\n## 故事: ${storyName.value}`)
-    if (currentScene.value) parts.push(`当前场景: ${currentScene.value}`)
-    if (cluesObtained.value.length) {
-      parts.push('\n### 已获线索')
-      for (const desc of cluesObtained.value) parts.push(`- ${desc}`)
-    }
-    return parts.join('\n')
+    return buildCharacterContext(toPromptState())
   }
 
   type ToolCall = { id: string; name: string; arguments: string }
 
-  const BASE_INSTRUCTIONS = [
-    '你是克苏鲁的呼唤第七版（COC 7th）的守密人（Keeper/KP）。',
-    '你的所有故事知识来源于「故事情报」中检索到的原文片段。请严格基于这些片段进行叙事，不要凭空编造场景或 NPC。',
-    '保持洛夫克拉夫特式的恐怖氛围。',
-  '',
-  '【信息披露与防剧透】',
-  '- 你掌握的“故事情报”是守密人内部参考，不代表玩家角色已知。',
-  '- 绝对禁止提前泄露未来剧情、幕后真相、隐藏动机、未出场 NPC/地点/道具的关键作用。',
-  '- 只允许披露：玩家当前所见所闻、已获得的线索（应通过 grant_clue 记录）、或基于当下证据的有限推断。',
-  '- 如果检索到的片段明显属于未来场景/后续章节，只用于你决定“现在能否给线索/是否需要引导行动”，不要直接复述给玩家。',
-  '- 叙事优先“给可操作的下一步”而不是“给完整答案”。必要时提出澄清问题（你具体检查哪里/如何做）。',
-    '',
-    '【严禁事项 — 违反将导致系统错误】',
-    '- 绝对禁止在文字中自行编造骰子结果（如"d100: 45"、"投骰 1d8 = 4"等）。',
-    '- 绝对禁止在文字中自行声称 HP/MP/SAN 变化（如"HP 降至 4"、"损失 3 SAN"等）。',
-    '- 所有检定、投骰、数值变更必须且只能通过调用工具函数实现。',
-    '- 工具返回结果后，你才能在叙事中提及结果。',
-    '',
-    '【检定规则】',
-    '- 仅在有戏剧性冲突、不确定性或危险时才要求检定。日常/职业常规行动自动成功。',
-    '- 需要检定时 → 调用 skill_check 工具（参数：技能名、技能值、难度；可选 bonusDice/penaltyDice、isPush 孤注一掷）。',
-    '- 遭遇恐怖事物时 → 调用 san_check 工具；若发生 SAN 损失，再视情况调用 trigger_insanity(sanLost, intValue) 判定永久/不定性/临时疯狂与发作。',
-    '- 失败 ≠ 完全失败：可以是部分成功、挫折或情况改变。',
-    '- 检定失败后可提供"孤注一掷"选项（SAN检定和战斗检定除外），再次调用 skill_check 时设 isPush: true。',
-    '- 玩家可在技能检定后选择消耗幸运：调用 spend_luck(amount)，不可用于幸运/SAN/伤害骰。',
-    '',
-    '【战斗规则 — 必须调用工具链】',
-    '- 近战：优先调用 melee_attack（一次完成对抗检定、伤害加值、护甲减免、重伤/濒死/即死）；或分步调用 opposed_check → roll_dice → adjust_hp → apply_major_wound。',
-    '- 远程：优先调用 ranged_attack（一次完成命中检定、伤害、护甲、重伤/濒死/即死）；或分步 skill_check → roll_dice → adjust_hp → apply_major_wound。',
-    '- NPC 攻击玩家时同样必须完整调用工具链。',
-    '- 禁止跳过任何步骤，禁止在文字中自编伤害数字。',
-    '',
-    '【线索传递】',
-    '- 显明线索：不需检定，直接调用 grant_clue 工具。',
-    '- 隐秘线索：需要检定成功后才调用 grant_clue。',
-    '- 绝不让单一线索成为唯一推进路径。',
-    '',
-    '【场景管理】',
-    '- 新游戏日开始（如过夜、休息后）时，调用 reset_day 工具重置当日 SAN 损失，以便不定性疯狂判定正确。',
-    '- 当调查员移动到新地点时，调用 transition_scene 工具。',
-    '- 场景名称来自故事原文，不要自行创造故事中不存在的地点。',
-    '- 若调查员想去的地方在故事情报中没有提及，告知该处无事可做并引导回到故事主线。',
-    '',
-    '【叙事原则】',
-    '- 描述证据而非结论（"地毯上有泥泞脚印" 而非 "有人闯入"）',
-    '- 少即是多：暗示恐怖而非完全揭示',
-    '- 使用全部感官（视觉、听觉、嗅觉、触觉）',
-    '- 致命遭遇前给予至少两次警告暗示',
-    '- 已叙述过的内容不要用相同措辞重复',
-  ].join('\n')
-
-  /** Parse a dice expression like "1d6", "2d6", or a plain number. */
-  function parseDiceExpr(expr: string): number {
-    const s = String(expr).trim().toLowerCase()
-    const match = s.match(/^(\d+)?d(\d+)$/)
-    if (match) {
-      const count = Math.max(1, Math.min(10, parseInt(match[1] || '1', 10)))
-      const sides = Math.max(1, Math.min(100, parseInt(match[2]!, 10)))
-      let total = 0
-      for (let i = 0; i < count; i++) total += rollD(sides)
-      return total
-    }
-    return Math.max(0, Math.floor(Number(s)) || 0)
-  }
-
-  /** Roll COC damage bonus: "-2"/"-1" -> fixed negative, "0"/"" -> 0, "+1D4"/"+2D6" -> roll dice. */
-  function rollDamageBonus(db: string): number {
-    const s = String(db ?? '0').trim().toUpperCase()
-    if (s === '' || s === '0') return 0
-    const neg = s.match(/^-(\d+)$/)
-    if (neg) return -Math.min(2, parseInt(neg[1]!, 10))
-    const plus = s.match(/^\+(\d+)?D(\d+)$/)
-    if (plus) return parseDiceExpr((plus[1] || '1') + 'd' + plus[2])
-    return 0
-  }
-
-  const resolveSkillCheck = resolveSkillCheckRule
-  const SUCCESS_LEVEL_RANK = SUCCESS_LEVEL_RANK_RULE
-
-  /** Roll d100 with optional bonus/penalty dice. COC: bonus = extra d10 for tens digit, take lower (better). Penalty = take higher. 00 = 100 (tens 0). */
-  function rollD100WithModifiers(bonusDice: number, penaltyDice: number): number {
-    const base = rollD(100)
-    const net = Math.max(-2, Math.min(2, (bonusDice || 0) - (penaltyDice || 0)))
-    if (net === 0) return base
-    const tens = base === 100 ? 0 : Math.floor(base / 10)
-    const ones = base === 100 ? 0 : base % 10
-    if (net > 0) {
-      let bestTens = tens
-      for (let i = 0; i < net; i++) {
-        const r = rollD(10)
-        const t = r === 10 ? 0 : r
-        if (t < bestTens) bestTens = t
-      }
-      return bestTens === 0 && ones === 0 ? 100 : bestTens * 10 + ones
-    } else {
-      let worstTens = tens
-      for (let i = 0; i < -net; i++) {
-        const r = rollD(10)
-        const t = r === 10 ? 0 : r
-        if (t > worstTens) worstTens = t
-      }
-      return worstTens === 0 && ones === 0 ? 100 : worstTens * 10 + ones
-    }
-  }
-
-  const SKILL_CHECK_RESULT_TEXT = SKILL_CHECK_RESULT_TEXT_RULE
-
-  function buildToolContext(): ToolHandlerContext {
-    return {
+  function processToolCalls(toolCalls: ToolCall[]): { toolResults: { role: 'tool'; tool_call_id: string; content: string }[]; displayMessages: Message[] } {
+    const ctx = buildToolContext({
       characterSheet: characterSheet.value,
-      getSkillName,
-      rollD,
-      parseDiceExpr,
-      rollD100WithModifiers,
-      rollDamageBonus,
-      resolveSkillCheck,
-      SUCCESS_LEVEL_RANK,
-      SKILL_CHECK_RESULT_TEXT,
       updateCharacterHP,
       updateCharacterMP,
       updateCharacterSAN,
@@ -472,11 +306,8 @@ export const useGameStore = defineStore('game', () => {
       transitionToScene,
       addClue,
       generateId,
-    }
-  }
-
-  function processToolCalls(toolCalls: ToolCall[]): { toolResults: { role: 'tool'; tool_call_id: string; content: string }[]; displayMessages: Message[] } {
-    return processToolCallsOrchestrator(toolCalls, buildToolContext())
+    })
+    return processToolCallsOrchestrator(toolCalls, ctx)
   }
 
   function buildStoryContext(): StoryContext | null {
@@ -513,41 +344,29 @@ export const useGameStore = defineStore('game', () => {
     } catch { return '' }
   }
 
-  const SAVE_VERSION = 1
-
   async function saveGame(saveId: string, displayName?: string): Promise<void> {
-    const api = window.electronAPI
-    if (!api?.writeSave) throw new Error('Save not available')
-    const payload = {
-      version: SAVE_VERSION,
-      name: displayName ?? saveId,
+    await writeSaveSnapshot(saveId, displayName, {
       storyId: storyId.value,
       storyName: storyName.value,
       storyOverview: storyOverview.value,
       currentScene: currentScene.value,
-      cluesObtained: toRaw(cluesObtained.value),
-      messages: toRaw(messages.value),
-      kpMemory: toRaw(kpMemory.value),
+      cluesObtained: cluesObtained.value,
+      messages: messages.value,
+      kpMemory: kpMemory.value,
       longTermSummary: longTermSummary.value,
-      longTermFacts: toRaw(longTermFacts.value),
+      longTermFacts: longTermFacts.value,
       playerTurnCount: playerTurnCount.value,
       gamePhase: gamePhase.value,
-      characterSheet: characterSheet.value ? toRaw(characterSheet.value) : null,
+      characterSheet: characterSheet.value,
       playerName: playerName.value,
       selectedOccupationId: selectedOccupationId.value,
       selectedOccupationName: selectedOccupationName.value,
       sessionId: sessionId.value,
-    }
-    // IPC uses structured clone; Vue/Pinia reactive proxies are not cloneable.
-    const serializable = JSON.parse(JSON.stringify(payload)) as typeof payload
-    await api.writeSave(saveId, serializable)
+    })
   }
 
   async function loadGame(saveId: string): Promise<void> {
-    const api = window.electronAPI
-    if (!api?.readSave) throw new Error('Load not available')
-    const data = await api.readSave(saveId) as Record<string, unknown>
-    if (!data || typeof data !== 'object') throw new Error('Invalid save data')
+    const data = await readSaveSnapshot(saveId)
     const v = data.version as number | undefined
     if (v !== SAVE_VERSION) {
       longTermSummary.value = ''
@@ -576,24 +395,11 @@ export const useGameStore = defineStore('game', () => {
   }
 
   async function listSaves(): Promise<string[]> {
-    const api = window.electronAPI
-    if (!api?.listSaves) return []
-    return await api.listSaves()
+    return await listSaveIds()
   }
 
   async function getSaveMeta(saveId: string): Promise<{ name?: string; storyName?: string } | null> {
-    const api = window.electronAPI
-    if (!api?.readSave) return null
-    try {
-      const data = await api.readSave(saveId) as Record<string, unknown>
-      if (!data || typeof data !== 'object') return null
-      return {
-        name: typeof data.name === 'string' ? data.name : saveId,
-        storyName: typeof data.storyName === 'string' ? data.storyName : undefined,
-      }
-    } catch {
-      return null
-    }
+    return await readSaveMeta(saveId)
   }
 
   async function requestOpening() {
@@ -606,12 +412,7 @@ export const useGameStore = defineStore('game', () => {
       if (!aiConfig?.model) throw new Error('请先在设置中刷新模型列表并选择模型')
 
       const ragContext = await fetchRagContext('开场 故事背景 场景描述 第一幕')
-      const charContext = buildCharacterContext()
-      const memoryBlock = buildMemoryBlock(kpMemory.value)
-      const longTermBlock = longTermSummary.value ? `\n## 长期记忆（本局至今）\n${longTermSummary.value}\n` : ''
-      const ragBlock = ragContext ? `\n## 故事情报\n${ragContext}\n` : ''
-      const systemPrompt = `${BASE_INSTRUCTIONS}${longTermBlock}${memoryBlock}${ragBlock}\n## 当前状态\n${charContext}\n\n请根据故事情报，向调查员做开场白，描述他们所处的场景，营造神秘与悬疑氛围。`
-      const chatMessages = [{ role: 'system', content: systemPrompt }, { role: 'user', content: '请开始游戏，向调查员做开场白。' }]
+      const { chatMessages } = buildOpeningPrompt(toPromptState(), ragContext)
 
       const fullContent = hasKpAgent()
         ? await runKpAgentLoopService(chatMessages, aiConfig, {
@@ -651,23 +452,7 @@ export const useGameStore = defineStore('game', () => {
       if (!aiConfig?.model) throw new Error('请先在设置中刷新模型列表并选择模型')
 
       const ragContext = await fetchRagContext(content)
-      const charContext = buildCharacterContext()
-      const memoryBlock = buildMemoryBlock(kpMemory.value)
-      const longTermBlock = longTermSummary.value ? `\n## 长期记忆（本局至今）\n${longTermSummary.value}\n` : ''
-      const recentTurnsBlock = buildRecentTurnsBlock(messages.value)
-      const ragBlock = ragContext ? `\n## 故事情报\n${ragContext}` : ''
-      const systemPrompt = `${BASE_INSTRUCTIONS}${longTermBlock}${memoryBlock}${recentTurnsBlock}${ragBlock}\n\n## 当前状态\n${charContext}`
-
-      const conv = messages.value
-        .filter((m) => (m.role === 'kp' || m.role === 'player') && !(m.role === 'kp' && (m as { isStreaming?: boolean }).isStreaming))
-        .slice(-CONVERSATION_WINDOW)
-      const chatMessages = [
-        { role: 'system', content: systemPrompt },
-        ...conv.map((m) => ({
-          role: m.role === 'player' ? 'user' as const : 'assistant' as const,
-          content: m.role === 'player' ? `[${m.playerName}] ${m.content}` : m.content,
-        })),
-      ]
+      const { chatMessages } = buildTurnPrompt(toPromptState(), ragContext)
 
       const fullContent = hasKpAgent()
         ? await runKpAgentLoopService(chatMessages, aiConfig, {

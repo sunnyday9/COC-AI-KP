@@ -2,6 +2,7 @@ const { ipcMain } = require('electron')
 const path = require('path')
 const OpenAI = require('openai')
 const { readSettings } = require('./settingsHandlers.cjs')
+const { logWarn } = require('../logging.cjs')
 
 const API_KEY_PLACEHOLDER = '***'
 
@@ -94,6 +95,25 @@ const COC_KP_TOOLS = [
   {
     type: 'function',
     function: {
+      name: 'first_aid',
+      description:
+        'Apply COC 7th First Aid effect after a successful 急救检定. If the investigator is dying and wounded, restores 1 HP (not above hpMax) and stabilises them from dying to major wound.',
+      parameters: {
+        type: 'object',
+        properties: {
+          success: {
+            type: 'boolean',
+            description:
+              'Whether the First Aid skill check succeeded. If false, HP and dying state do not change (only narrative message). Default true.',
+          },
+        },
+        required: [],
+      },
+    },
+  },
+  {
+    type: 'function',
+    function: {
       name: 'adjust_san',
       description: 'Adjust investigator SAN after a san_check result. Use the loss value returned by san_check as negative delta.',
       parameters: {
@@ -112,6 +132,28 @@ const COC_KP_TOOLS = [
         type: 'object',
         properties: { delta: { type: 'integer', description: 'MP change (negative for spending)' } },
         required: ['delta'],
+      },
+    },
+  },
+  {
+    type: 'function',
+    function: {
+      name: 'medicine',
+      description:
+        'Apply COC 7th Medicine effect after a successful 医学检定 under proper medical care. On success heals 1D3 HP (not above hpMax).',
+      parameters: {
+        type: 'object',
+        properties: {
+          success: {
+            type: 'boolean',
+            description: 'Whether the Medicine skill check succeeded. If false, HP does not change.',
+          },
+          healExpr: {
+            type: 'string',
+            description: 'Healing dice expression, default "1d3".',
+          },
+        },
+        required: [],
       },
     },
   },
@@ -855,7 +897,7 @@ try {
   const missingInBackend = cocToolNames.filter((n) => !backendNames.has(n))
   const missingInList = [...backendNames].filter((n) => !cocToolNames.includes(n))
   if (missingInBackend.length || missingInList.length) {
-    console.warn('[aiHandlers] 工具名单与 cocToolNames.json 不一致', { missingInBackend, missingInList })
+    logWarn('AI', '工具名单与 cocToolNames.json 不一致', { missingInBackend, missingInList })
   }
 } catch (e) {
   // 打包后路径可能不同，仅开发时校验
