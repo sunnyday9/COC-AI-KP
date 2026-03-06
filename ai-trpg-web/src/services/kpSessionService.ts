@@ -4,6 +4,7 @@
  */
 import { chat, isStreamResponse } from './ai'
 import type { AIProviderConfig } from './ai'
+import type { StoryContext } from '../types/storyContext'
 
 export type ToolCall = { id: string; name: string; arguments: string }
 
@@ -14,6 +15,8 @@ export interface KpAgentCallbacks {
   onStreamChunk: (preview: string) => void
   /** 在最后一条消息前插入展示消息（如骰子、系统提示） */
   insertMessagesBeforeLast: (messages: unknown[]) => void
+  /** 返回当前故事上下文，供 LangGraph 使用；每轮调用以获取最新 state */
+  getStoryContext?: () => StoryContext | null
 }
 
 export interface DirectChatCallbacks {
@@ -32,7 +35,8 @@ export function hasKpAgent(): boolean {
 export async function kpInvokeOnce(
   msgs: unknown[],
   aiConfig: AIProviderConfig,
-  onDelta?: (chunk: string) => void
+  onDelta?: (chunk: string) => void,
+  storyContext?: StoryContext | null
 ): Promise<{ content?: string; toolCalls?: ToolCall[] }> {
   const api = getKpApi()
   const params = {
@@ -43,6 +47,7 @@ export async function kpInvokeOnce(
     apiKey: aiConfig.apiKey,
     temperature: aiConfig.temperature,
     maxTokens: aiConfig.maxTokens,
+    ...(storyContext != null ? { storyContext } : {}),
   }
 
   if (api?.kpInvokeStream && api?.onKpStream) {
@@ -82,11 +87,12 @@ export async function runKpAgentLoop(
   for (let loop = 0; loop < MAX_TOOL_ITERATIONS; loop++) {
     const base = fullContent
     let iter = ''
+    const storyContext = callbacks.getStoryContext?.() ?? null
     const r = await kpInvokeOnce(msgs, aiConfig, (chunk) => {
       iter += chunk
       const preview = base ? base + '\n\n' + iter : iter
       callbacks.onStreamChunk(preview)
-    })
+    }, storyContext)
 
     const endContent = r?.content
     const iterFinal = (endContent !== undefined && endContent !== null ? endContent : iter) || ''

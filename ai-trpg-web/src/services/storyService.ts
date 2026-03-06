@@ -316,6 +316,155 @@ export function markdownToChunks(
 }
 
 /**
+ * 结构化 Markdown 分块：按约定标题解析场景/线索/NPC，产出带 type 与 sceneId 的 RAG 块。
+ * 约定：## 场景：<name> 或 ## 场景 <name>；### 线索 / ### 线索：；### NPC / ### 人物：。
+ * 未匹配到场景标题的内容归为 type 'rule'，无 sceneId。
+ */
+export function markdownToStructuredChunks(
+  content: string,
+  storyId: string,
+  options?: { chunkSize?: number; overlap?: number; minChunkSize?: number }
+): RAGChunk[] {
+  const chunkSize = options?.chunkSize ?? 1000
+  const minChunkSize = options?.minChunkSize ?? 200
+  const overlap = options?.overlap ?? 150
+
+  const sceneHeaderRe = /^##\s*场景[：:\s]+(.+)$/
+  const clueHeaderRe = /^###\s*线索[：:\s]*.*$/
+  const npcHeaderRe = /^###\s*(?:NPC|人物)[：:\s]*.*$/
+
+  interface Block {
+    type: 'scene' | 'clue' | 'npc' | 'rule'
+    sceneId?: string
+    sceneName?: string
+    content: string
+  }
+
+  const blocks: Block[] = []
+  const lines = content.split('\n')
+  let currentSceneId: string | undefined
+  let currentSceneName: string | undefined
+  let currentType: Block['type'] = 'rule'
+  let buffer: string[] = []
+
+  function flush() {
+    const text = buffer.join('\n').trim()
+    if (text.length < 1) return
+    blocks.push({
+      type: currentType,
+      sceneId: currentSceneId,
+      sceneName: currentSceneName,
+      content: text,
+    })
+    buffer = []
+  }
+
+  for (const line of lines) {
+    const sceneMatch = line.match(sceneHeaderRe)
+    if (sceneMatch) {
+      flush()
+      currentSceneId = sceneMatch[1]!.trim()
+      currentSceneName = currentSceneId
+      currentType = 'scene'
+      buffer.push(line + '\n')
+      continue
+    }
+    if (clueHeaderRe.test(line)) {
+      flush()
+      currentType = 'clue'
+      buffer.push(line + '\n')
+      continue
+    }
+    if (npcHeaderRe.test(line)) {
+      flush()
+      currentType = 'npc'
+      buffer.push(line + '\n')
+      continue
+    }
+    if (/^##\s+/.test(line) && !sceneHeaderRe.test(line)) {
+      flush()
+      currentSceneId = undefined
+      currentSceneName = undefined
+      currentType = 'rule'
+      buffer.push(line + '\n')
+      continue
+    }
+    buffer.push(line + '\n')
+  }
+  flush()
+
+  const chunks: RAGChunk[] = []
+  let chunkIndex = 0
+  for (const block of blocks) {
+    const meta: RAGChunk['metadata'] = {
+      storyId,
+      chunkIndex: chunkIndex.toString(),
+    }
+    if (block.sceneId) {
+      meta.sceneId = block.sceneId
+    }
+    if (block.content.length <= chunkSize) {
+      chunks.push({
+        id: `story-${storyId}-chunk-${chunkIndex}`,
+        content: block.content.trim(),
+        type: block.type,
+        metadata: meta,
+      })
+      chunkIndex++
+    } else {
+      const paragraphs = block.content.split(/\n\s*\n/).filter((p) => p.trim().length > 0)
+      let acc = ''
+      let accLen = 0
+      for (let i = 0; i < paragraphs.length; i++) {
+        const p = paragraphs[i]!
+        const pText = p + '\n\n'
+        if (accLen + pText.length <= chunkSize) {
+          acc = acc ? acc + pText : pText
+          accLen += pText.length
+        } else {
+          if (acc.trim().length >= minChunkSize) {
+            chunks.push({
+              id: `story-${storyId}-chunk-${chunkIndex}`,
+              content: acc.trim(),
+              type: block.type,
+              metadata: { ...meta, chunkIndex: chunkIndex.toString() },
+            })
+            chunkIndex++
+            const tail = acc.slice(-Math.min(overlap, acc.length))
+            acc = tail + pText
+            accLen = tail.length + pText.length
+          } else {
+            acc = pText
+            accLen = pText.length
+          }
+        }
+      }
+      if (acc.trim()) {
+        chunks.push({
+          id: `story-${storyId}-chunk-${chunkIndex}`,
+          content: acc.trim(),
+          type: block.type,
+          metadata: { ...meta, chunkIndex: chunkIndex.toString() },
+        })
+        chunkIndex++
+      }
+    }
+  }
+
+  if (chunks.length === 0) {
+    return [
+      {
+        id: `story-${storyId}-chunk-0`,
+        content: content.trim() || '(空内容)',
+        type: 'rule',
+        metadata: { storyId, chunkIndex: '0' },
+      },
+    ]
+  }
+  return chunks
+}
+
+/**
  * 清理 PDF 提取的文本：移除多余的空白、修复换行问题
  */
 function cleanPdfText(text: string): string {
@@ -336,26 +485,31 @@ function cleanPdfText(text: string): string {
 }
 
 /**
- * 根据文件扩展名选择合适的分块方法
+ * 根据文件扩展名选择合适的分块方法。
+ * 当 useStructuredMarkdown 为 true 且为 .md 时，使用约定标题（## 场景、### 线索、### NPC/人物）产出带 sceneId/type 的块。
  */
 export function fileToChunks(
   content: string,
   storyId: string,
-  filename: string
+  filename: string,
+  options?: { useStructuredMarkdown?: boolean }
 ): RAGChunk[] {
   const ext = filename.toLowerCase().split('.').pop() || ''
-  
+  const useStructured = options?.useStructuredMarkdown === true
+
   // PDF 文件：先清理文本，然后按文本处理
   if (ext === 'pdf') {
     const cleaned = cleanPdfText(content)
     return textToChunks(cleaned, storyId)
   }
-  
-  // Markdown 文件：按标题分割
+
+  // Markdown 文件：可选结构化解析（场景/线索/NPC）或默认按标题分块
   if (ext === 'md' || ext === 'markdown') {
-    return markdownToChunks(content, storyId)
+    return useStructured
+      ? markdownToStructuredChunks(content, storyId)
+      : markdownToChunks(content, storyId)
   }
-  
+
   // 其他文本文件：按段落和句子分割
   return textToChunks(content, storyId)
 }

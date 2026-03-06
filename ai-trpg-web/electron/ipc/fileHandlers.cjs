@@ -122,6 +122,68 @@ function registerFileHandlers() {
     }
   })
 
+  // 专用于 RAG 索引：正文由 pdf-parse 提取；仅对 PDF 内嵌图片做 OCR，避免与正文重复
+  ipcMain.handle('file:readStoryForRag', async (_, filePath) => {
+    const ext = path.extname(filePath).toLowerCase()
+    if (ext !== '.pdf') {
+      const content = await fs.readFile(filePath, 'utf-8')
+      return content
+    }
+    const dataBuffer = await fs.readFile(filePath)
+    const pdfData = await pdfParse(dataBuffer)
+    let mainText = (pdfData.text || '').trim()
+    try {
+      const { PDFDocument, PDFRawStream, PDFName, decodePDFRawStream } = await import('pdf-lib')
+      const Tesseract = (await import('tesseract.js')).default
+      const doc = await PDFDocument.load(new Uint8Array(dataBuffer))
+      const entries = doc.context.enumerateIndirectObjects()
+      const imageBuffers = []
+      for (const [, obj] of entries) {
+        if (!(obj instanceof PDFRawStream)) continue
+        const dict = obj.dict
+        const subtypeRef = dict.get(PDFName.of('Subtype'))
+        if (!subtypeRef) continue
+        const subtype = doc.context.lookup(subtypeRef)
+        if (!subtype || subtype.encodedName !== '/Image') continue
+        let bytes = obj.getContents()
+        const filterRef = dict.get(PDFName.of('Filter'))
+        if (filterRef) {
+          const filter = doc.context.lookup(filterRef)
+          const isDCT = filter && filter.encodedName === '/DCTDecode'
+          if (!isDCT) {
+            try {
+              const decoded = decodePDFRawStream({ dict: obj.dict, contents: bytes })
+              bytes = decoded.getBytes()
+            } catch {
+              continue
+            }
+          }
+        }
+        const buf = Buffer.from(bytes)
+        const isJpeg = buf.length >= 2 && buf[0] === 0xff && buf[1] === 0xd8
+        const isPng = buf.length >= 4 && buf[0] === 0x89 && buf[1] === 0x50 && buf[2] === 0x4e && buf[3] === 0x47
+        if (isJpeg || isPng) imageBuffers.push(buf)
+      }
+      if (imageBuffers.length) {
+        const worker = await Tesseract.createWorker('chi_sim+eng')
+        const imageTexts = []
+        for (let i = 0; i < imageBuffers.length; i++) {
+          const { data } = await worker.recognize(imageBuffers[i])
+          if (data.text && data.text.trim()) {
+            imageTexts.push(`[插图 ${i + 1}]\n${data.text.trim()}`)
+          }
+        }
+        await worker.terminate()
+        if (imageTexts.length) {
+          mainText += '\n\n--- 以下为 PDF 内嵌插图中识别的内容（场景结构图等）---\n\n' + imageTexts.join('\n\n')
+        }
+      }
+    } catch (err) {
+      // 内嵌图提取或 OCR 失败时仅保留正文
+    }
+    return mainText
+  })
+
   ipcMain.handle('file:importStory', async () => {
     const result = await dialog.showOpenDialog({
       title: '选择故事文件',

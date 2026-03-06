@@ -18,6 +18,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
   // Stories
   listStories: () => ipcRenderer.invoke('file:listStories'),
   readStory: (filePath) => ipcRenderer.invoke('file:readStory', filePath),
+  readStoryForRag: (filePath) => ipcRenderer.invoke('file:readStoryForRag', filePath),
   importStory: () => ipcRenderer.invoke('file:importStory'),
   deleteStory: (filePath) => ipcRenderer.invoke('file:deleteStory', filePath),
 

@@ -12,6 +12,14 @@ const { messages, isSending, storyId, storyName, playerName, gamePhase, characte
 const inputText = ref('')
 const messagesEnd = ref<HTMLElement | null>(null)
 const cluesPanelOpen = ref(false)
+const saveModalOpen = ref(false)
+const loadModalOpen = ref(false)
+const saveNameInput = ref('')
+const saveError = ref('')
+const loadError = ref('')
+const saveList = ref<string[]>([])
+const saveMetaCache = ref<Record<string, { name?: string; storyName?: string }>>({})
+const loadLoading = ref(false)
 
 function scrollToBottom() {
   nextTick(() => {
@@ -45,6 +53,51 @@ function handleKeydown(e: KeyboardEvent) {
     handleSend()
   }
 }
+
+function openSaveModal() {
+  saveModalOpen.value = true
+  saveNameInput.value = `${storyName.value || '存档'} ${new Date().toLocaleString('zh-CN')}`
+  saveError.value = ''
+}
+
+async function confirmSave() {
+  saveError.value = ''
+  const name = saveNameInput.value.trim() || '未命名存档'
+  try {
+    const saveId = 'save_' + Date.now()
+    await gameStore.saveGame(saveId, name)
+    saveModalOpen.value = false
+  } catch (e) {
+    saveError.value = e instanceof Error ? e.message : String(e)
+  }
+}
+
+function openLoadModal() {
+  loadModalOpen.value = true
+  loadError.value = ''
+  gameStore.listSaves().then((ids) => {
+    saveList.value = ids
+    saveMetaCache.value = {}
+    ids.forEach((id) => {
+      gameStore.getSaveMeta(id).then((meta) => {
+        if (meta) saveMetaCache.value[id] = meta
+      })
+    })
+  })
+}
+
+async function confirmLoad(saveId: string) {
+  loadError.value = ''
+  loadLoading.value = true
+  try {
+    await gameStore.loadGame(saveId)
+    loadModalOpen.value = false
+  } catch (e) {
+    loadError.value = e instanceof Error ? e.message : String(e)
+  } finally {
+    loadLoading.value = false
+  }
+}
 </script>
 
 <template>
@@ -66,6 +119,21 @@ function handleKeydown(e: KeyboardEvent) {
           </div>
         </div>
 
+        <!-- Save / Load -->
+        <button type="button"
+                @click="openSaveModal"
+                class="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium
+                       bg-cthulhu-900/40 border border-cthulhu-600/30 text-cthulhu-200
+                       hover:bg-cthulhu-800/50 transition-all duration-200">
+          &#x1F4BE; 存档
+        </button>
+        <button type="button"
+                @click="openLoadModal"
+                class="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium
+                       bg-cthulhu-900/40 border border-cthulhu-600/30 text-cthulhu-200
+                       hover:bg-cthulhu-800/50 transition-all duration-200">
+          &#x1F4C4; 读档
+        </button>
         <!-- Clues toggle -->
         <button v-if="cluesObtained.length > 0"
                 type="button"
@@ -138,6 +206,45 @@ function handleKeydown(e: KeyboardEvent) {
         </div>
       </aside>
     </transition>
+
+    <!-- Save modal -->
+    <div v-if="saveModalOpen" class="fixed inset-0 z-50 flex items-center justify-center bg-black/60" @click.self="saveModalOpen = false">
+      <div class="bg-gray-900 border border-gray-700 rounded-lg shadow-xl w-full max-w-sm mx-4 p-4">
+        <h3 class="font-serif text-parchment-200 mb-3">存档</h3>
+        <input v-model="saveNameInput" type="text" placeholder="存档名称"
+               class="gothic-input w-full mb-2" @keydown.enter="confirmSave" />
+        <p v-if="saveError" class="text-blood-300 text-xs mb-2">{{ saveError }}</p>
+        <div class="flex justify-end gap-2">
+          <button type="button" class="gothic-btn-secondary text-sm" @click="saveModalOpen = false">取消</button>
+          <button type="button" class="gothic-btn text-sm" @click="confirmSave">保存</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- Load modal -->
+    <div v-if="loadModalOpen" class="fixed inset-0 z-50 flex items-center justify-center bg-black/60" @click.self="loadModalOpen = false">
+      <div class="bg-gray-900 border border-gray-700 rounded-lg shadow-xl w-full max-w-md mx-4 max-h-[70vh] flex flex-col">
+        <div class="p-4 border-b border-gray-700">
+          <h3 class="font-serif text-parchment-200">读档</h3>
+        </div>
+        <div class="flex-1 overflow-y-auto p-4 space-y-2">
+          <p v-if="saveList.length === 0" class="text-gray-500 text-sm">暂无存档</p>
+          <button v-for="id in saveList" :key="id"
+                  type="button"
+                  :disabled="loadLoading"
+                  @click="confirmLoad(id)"
+                  class="w-full text-left px-3 py-2 rounded-lg border border-gray-700 bg-gray-800/50
+                         hover:bg-gray-800 text-parchment-200 text-sm transition-colors">
+            <span class="font-medium">{{ saveMetaCache[id]?.name ?? id }}</span>
+            <span v-if="saveMetaCache[id]?.storyName" class="text-gray-500 text-xs ml-2">{{ saveMetaCache[id]?.storyName }}</span>
+          </button>
+        </div>
+        <p v-if="loadError" class="px-4 py-2 text-blood-300 text-xs">{{ loadError }}</p>
+        <div class="p-4 border-t border-gray-700 flex justify-end">
+          <button type="button" class="gothic-btn-secondary text-sm" @click="loadModalOpen = false">关闭</button>
+        </div>
+      </div>
+    </div>
   </div>
 </template>
 

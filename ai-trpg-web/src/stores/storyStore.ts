@@ -49,11 +49,14 @@ export const useStoryStore = defineStore('story', () => {
     const api = window.electronAPI
     if (!api?.readStory) return { ok: false, error: 'No Electron' }
     try {
-      const content = await api.readStory(path)
+      const content = await (api.readStoryForRag ?? api.readStory)(path)
       const storyId = pathToStoryId(path)
       const filename = path.split(/[/\\]/).pop() || 'story.txt'
       const displayName = filename.replace(/\.[^./\\]+$/i, '')
-      const chunks = fileToChunks(content, storyId, filename)
+      const isMarkdown = /\.(md|markdown)$/i.test(filename)
+      const chunks = fileToChunks(content, storyId, filename, {
+        useStructuredMarkdown: isMarkdown,
+      })
       const result = await indexStory(storyId, chunks, { name: displayName })
       return result.ok ? { ok: true, indexed: result.indexed } : { ok: false, error: 'Index failed' }
     } catch (e) {

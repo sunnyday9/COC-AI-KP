@@ -2,7 +2,21 @@ const { app, BrowserWindow } = require('electron');
 const path = require('path');
 const { registerAllHandlers } = require('./ipc/index.cjs');
 
-const isDev = process.env.NODE_ENV === 'development' || !app.isPackaged;
+// E2E support (only when E2E_FORCE_PROD=1 to avoid accidental override):
+// - E2E_USER_DATA_DIR: isolate Electron userData for repeatable tests (must be absolute path)
+// - E2E_FORCE_PROD=1: force loading dist (no dev server needed)
+if (process.env.E2E_FORCE_PROD === '1' && process.env.E2E_USER_DATA_DIR) {
+  const p = process.env.E2E_USER_DATA_DIR
+  if (path.isAbsolute(p)) {
+    try {
+      app.setPath('userData', p)
+    } catch (_e) {
+      // ignore if Electron disallows at this stage
+    }
+  }
+}
+
+const isDev = (process.env.NODE_ENV === 'development' || !app.isPackaged) && process.env.E2E_FORCE_PROD !== '1';
 
 function createWindow() {
   const mainWindow = new BrowserWindow({

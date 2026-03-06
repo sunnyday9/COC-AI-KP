@@ -140,6 +140,21 @@ function cosineSimilarity(a, b) {
   return dot
 }
 
+/** Cosine similarity for dense vectors (number[]). Returns 0 if lengths differ or empty. */
+function cosineSimilarityArray(a, b) {
+  if (!Array.isArray(a) || !Array.isArray(b) || a.length !== b.length || a.length === 0) return 0
+  var dot = 0
+  var normA = 0
+  var normB = 0
+  for (var i = 0; i < a.length; i++) {
+    dot += a[i] * b[i]
+    normA += a[i] * a[i]
+    normB += b[i] * b[i]
+  }
+  var norm = Math.sqrt(normA) * Math.sqrt(normB)
+  return norm > 0 ? dot / norm : 0
+}
+
 /* ------------------------------------------------------------------ */
 /*  In-memory index (per-script)                                       */
 /* ------------------------------------------------------------------ */
@@ -153,6 +168,7 @@ function getOrLoadIndex(scriptId) {
     for (var i = 0; i < saved.docs.length; i++) {
       saved.docs[i].tf = new Map(saved.docs[i].tf)
       saved.docs[i].tfidf = new Map(saved.docs[i].tfidf)
+      // vector stays as number[] if present
     }
     saved.idf = new Map(saved.idf)
     memoryCache.set(scriptId, saved)
@@ -168,7 +184,7 @@ function serializeIndex(idx) {
     indexedAt: idx.indexedAt,
     chunkCount: idx.chunkCount,
     docs: idx.docs.map(function (d) {
-      return {
+      var out = {
         id: d.id,
         content: d.content,
         type: d.type,
@@ -176,6 +192,8 @@ function serializeIndex(idx) {
         tf: Array.from(d.tf.entries()),
         tfidf: Array.from(d.tfidf.entries()),
       }
+      if (Array.isArray(d.vector)) out.vector = d.vector
+      return out
     }),
     idf: Array.from(idx.idf.entries()),
   }
@@ -187,8 +205,9 @@ function serializeIndex(idx) {
 
 /**
  * Index a batch of chunks for a story/script.
+ * If options.getEmbedding (async (text) => number[]) is provided, computes and stores dense vectors per chunk (TF-IDF kept as fallback).
  */
-export function indexChunks(storyId, chunks, storyMeta) {
+export async function indexChunks(storyId, chunks, storyMeta, options) {
   if (!chunks || !chunks.length) return { ok: true, indexed: 0 }
 
   var docs = chunks.map(function (c) {
@@ -200,12 +219,24 @@ export function indexChunks(storyId, chunks, storyMeta) {
       metadata: normalizeMetadata(c.metadata || {}, storyId),
       tf: tf,
       tfidf: new Map(),
+      vector: undefined,
     }
   })
 
   var idf = buildIdfFromDocs(docs)
   for (var i = 0; i < docs.length; i++) {
     docs[i].tfidf = tfidfVector(docs[i].tf, idf)
+  }
+
+  var getEmbedding = options && typeof options.getEmbedding === 'function' ? options.getEmbedding : null
+  if (getEmbedding) {
+    for (var j = 0; j < docs.length; j++) {
+      try {
+        docs[j].vector = await getEmbedding(docs[j].content || '')
+      } catch (_e) {
+        // leave vector undefined; query will use TF-IDF for this doc
+      }
+    }
   }
 
   var storyName = (storyMeta && storyMeta.name) ? storyMeta.name : storyId
@@ -278,38 +309,67 @@ export function deleteChunks(scriptId) {
 
 /**
  * Query for the top-K most relevant chunks.
+ * If params.getEmbedding (async (text) => number[]) is provided, uses dense similarity when doc.vector exists; else TF-IDF. Hybrid index supported.
  */
-export function queryChunks(params) {
+export async function queryChunks(params) {
   var query = params.query
   var scriptId = params.scriptId
   var sceneId = params.sceneId
   var type = params.type
   var topK = params.topK || 5
+  var getEmbedding = params.getEmbedding
 
   if (!scriptId) return { chunks: [] }
   var idx = getOrLoadIndex(scriptId)
   if (!idx || !idx.docs.length) return { chunks: [] }
 
   var queryTf = tokenize(query || '')
-  var queryVec = tfidfVector(queryTf, idx.idf)
+  var queryTfidf = tfidfVector(queryTf, idx.idf)
+  var queryVector = null
+  if (getEmbedding && typeof getEmbedding === 'function') {
+    try {
+      queryVector = await getEmbedding(query || '')
+    } catch (_e) {
+      queryVector = null
+    }
+  }
 
-  var candidates = idx.docs
+  // Candidate selection policy (anti-spoiler):
+  // - If sceneId is provided, NEVER fall back to chunks from other scenes.
+  // - Prefer in-scene chunks; if none exist, use "global" chunks that have no scene_id.
+  // - type is a soft filter: if it would make results empty, ignore it (within the same base candidates).
+  var baseCandidates = idx.docs
   if (sceneId) {
-    candidates = candidates.filter(function (d) {
+    var inScene = idx.docs.filter(function (d) {
       var meta = d.metadata || {}
       return meta.scene_id === sceneId || meta.sceneId === sceneId
     })
+    var global = idx.docs.filter(function (d) {
+      var meta = d.metadata || {}
+      return !meta.scene_id && !meta.sceneId
+    })
+    baseCandidates = inScene.length > 0 ? inScene : global
   }
+
+  var candidates = baseCandidates
   if (type) {
-    candidates = candidates.filter(function (d) { return d.type === type })
+    var typed = baseCandidates.filter(function (d) { return d.type === type })
+    if (typed.length > 0) candidates = typed
   }
-  if (candidates.length === 0) candidates = idx.docs
+
+  if (!candidates || candidates.length === 0) return { chunks: [] }
 
   var scored = candidates.map(function (doc) {
+    var score
+    if (queryVector && Array.isArray(doc.vector) && doc.vector.length === queryVector.length) {
+      score = cosineSimilarityArray(queryVector, doc.vector)
+    } else {
+      score = cosineSimilarity(queryTfidf, doc.tfidf)
+    }
     return {
       content: doc.content,
       metadata: doc.metadata,
-      distance: 1 - cosineSimilarity(queryVec, doc.tfidf),
+      distance: 1 - score,
     }
   })
 
@@ -320,13 +380,20 @@ export function queryChunks(params) {
 /**
  * Build a formatted context string for the LLM prompt.
  */
-export function buildContext(params) {
+export async function buildContext(params) {
   var query = params.query
   var scriptId = params.scriptId
   var sceneId = params.sceneId
   var topK = params.topK || 5
+  var getEmbedding = params.getEmbedding
 
-  var result = queryChunks({ query: query, scriptId: scriptId, sceneId: sceneId, topK: topK })
+  var result = await queryChunks({
+    query: query,
+    scriptId: scriptId,
+    sceneId: sceneId,
+    topK: topK,
+    getEmbedding: getEmbedding,
+  })
   var chunks = result.chunks
   if (!chunks.length) return { context: '' }
 

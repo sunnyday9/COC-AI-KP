@@ -1,8 +1,9 @@
 import { defineStore } from 'pinia'
-import { ref } from 'vue'
+import { ref, toRaw } from 'vue'
 import type { Message } from '../types/game'
 import type { GamePhase, COCCharacterSheet } from '../types/character'
-import { getContext, getStoryOverview } from '../services/ragService'
+import type { StoryContext } from '../types/storyContext'
+import { getContext } from '../services/ragService'
 import {
   hasKpAgent,
   runKpAgentLoop as runKpAgentLoopService,
@@ -18,13 +19,22 @@ import { getSkillName } from '../data/coc7'
 import { useSettingsStore } from './settingsStore'
 import { processToolCalls as processToolCallsOrchestrator } from '../toolCalling'
 import type { ToolHandlerContext } from '../toolCalling'
+import { summarizeLongTerm } from '../services/memoryService'
 
 function generateId(): string {
   return 'msg_' + Date.now() + '_' + Math.random().toString(36).slice(2, 9)
 }
 
-const MAX_MEMORY_ENTRIES = 8
-const MAX_ENTRY_LEN = 280
+/** Number of recent player+KP messages sent to the KP each turn (sliding window). */
+const CONVERSATION_WINDOW = 18
+const MAX_MEMORY_ENTRIES = 12
+/** Number of recent turns (player + KP pair) in the "recent turns" compact block. */
+const RECENT_TURNS_COUNT = 5
+const RECENT_TURN_ENTRY_LEN = 120
+/** Run long-term summarization every N player turns. */
+const LONG_TERM_SUMMARY_EVERY_N_TURNS = 10
+/** Number of recent messages to include in long-term summarization input. */
+const SUMMARIZE_RECENT_MESSAGES = 20
 
 function sanitizeKpResponse(content: string): string {
   if (!content?.trim()) return content
@@ -47,8 +57,36 @@ function sanitizeKpResponse(content: string): string {
 
 function buildMemoryBlock(entries: string[]): string {
   if (entries.length === 0) return ''
-  const truncated = entries.slice(-MAX_MEMORY_ENTRIES).map((s) => s.trim().slice(0, MAX_ENTRY_LEN) + (s.length > MAX_ENTRY_LEN ? '…' : ''))
-  return `\n## 记忆：你（守密人）在本局已说过的内容\n以下是你已经向调查员表述过的内容，请避免用相同或高度相似的措辞重复。每次回应请用新的表述方式推进剧情。\n${truncated.map((t) => `- ${t}`).join('\n')}\n`
+  const lines = entries.slice(-MAX_MEMORY_ENTRIES).map((s) => s.trim()).filter(Boolean)
+  return `\n## 记忆：你（守密人）在本局已说过的内容\n以下是你已经向调查员表述过的内容，请避免用相同或高度相似的措辞重复。每次回应请用新的表述方式推进剧情。\n${lines.map((t) => `- ${t}`).join('\n')}\n`
+}
+
+/** Build a compact "recent turns" block (player + KP pairs) for dense short-term context. */
+function buildRecentTurnsBlock(msgs: Message[], maxTurns: number = RECENT_TURNS_COUNT): string {
+  const filtered = msgs.filter((m): m is Message => (m.role === 'kp' || m.role === 'player') && !(m.role === 'kp' && (m as { isStreaming?: boolean }).isStreaming))
+  if (filtered.length === 0) return ''
+  const pairs: string[] = []
+  let i = filtered.length - 1
+  while (i >= 0 && pairs.length < maxTurns) {
+    const kp = filtered[i]
+    if (!kp || kp.role !== 'kp') {
+      i--
+      continue
+    }
+    const kpContent = ('content' in kp ? String(kp.content) : '').trim().slice(0, RECENT_TURN_ENTRY_LEN) + (('content' in kp ? String(kp.content) : '').length > RECENT_TURN_ENTRY_LEN ? '…' : '')
+    i--
+    const playerMsg = i >= 0 ? filtered[i] : undefined
+    if (playerMsg && playerMsg.role === 'player') {
+      const playerContent = ('content' in playerMsg ? String(playerMsg.content) : '').trim().slice(0, RECENT_TURN_ENTRY_LEN) + (('content' in playerMsg ? String(playerMsg.content) : '').length > RECENT_TURN_ENTRY_LEN ? '…' : '')
+      const name = 'playerName' in playerMsg ? playerMsg.playerName : '调查员'
+      pairs.unshift(`玩家(${name}): ${playerContent} → 守密人: ${kpContent}`)
+      i--
+    } else {
+      pairs.unshift(`守密人: ${kpContent}`)
+    }
+  }
+  if (pairs.length === 0) return ''
+  return `\n## 最近几轮\n${pairs.map((p) => `- ${p}`).join('\n')}\n`
 }
 
 export const useGameStore = defineStore('game', () => {
@@ -65,6 +103,12 @@ export const useGameStore = defineStore('game', () => {
   const cluesObtained = ref<string[]>([])
   const messages = ref<Message[]>([])
   const kpMemory = ref<string[]>([])
+  /** Long-term session summary (key events, scenes, clues); updated on scene change / periodically. */
+  const longTermSummary = ref<string>('')
+  /** Optional discrete facts (e.g. clues learned) for long-term context. */
+  const longTermFacts = ref<string[]>([])
+  /** Number of player messages sent this session (for periodic long-term summarization). */
+  const playerTurnCount = ref(0)
   const isInGame = ref(false)
   const isSending = ref(false)
   const playerName = ref('调查员')
@@ -84,6 +128,9 @@ export const useGameStore = defineStore('game', () => {
     cluesObtained.value = []
     messages.value = []
     kpMemory.value = []
+    longTermSummary.value = ''
+    longTermFacts.value = []
+    playerTurnCount.value = 0
     isInGame.value = false
     isSending.value = false
     gamePhase.value = 'story_selected'
@@ -98,18 +145,16 @@ export const useGameStore = defineStore('game', () => {
     gamePhase.value = 'occupation_selected'
   }
 
-  /** Start a game with an indexed story (fetches overview from RAG). */
+  /** Start a game with an indexed story. */
   async function startGame(opts: { storyId: string; storyName?: string; name?: string }) {
     reset()
     storyId.value = opts.storyId
     storyName.value = opts.storyName || opts.storyId
     sessionId.value = 'sess_' + Date.now()
     if (opts.name) playerName.value = opts.name
-    try {
-      const overview = await getStoryOverview(opts.storyId, 15)
-      storyOverview.value = overview.overview
-      if (overview.storyName) storyName.value = overview.storyName
-    } catch { /* proceed without overview */ }
+    // Anti-spoiler: do not preload a full-story "overview" into prompts.
+    // Opening context will be retrieved dynamically by RAG per scene/turn.
+    storyOverview.value = ''
     gamePhase.value = 'story_selected'
   }
 
@@ -145,6 +190,37 @@ export const useGameStore = defineStore('game', () => {
 
   function transitionToScene(sceneName: string) {
     currentScene.value = sceneName
+    runLongTermSummarization()
+  }
+
+  /** Build recent conversation text for long-term summarization (fire-and-forget). */
+  function runLongTermSummarization() {
+    const settingsStore = useSettingsStore()
+    const aiConfig = settingsStore.aiConfig
+    if (!aiConfig?.model) return
+    const recent = messages.value
+      .filter((m): m is Message => m.role === 'player' || m.role === 'kp')
+      .slice(-SUMMARIZE_RECENT_MESSAGES)
+    const recentText = recent
+      .map((m) => (m.role === 'player' ? `玩家: ${'content' in m ? m.content : ''}` : `守密人: ${'content' in m ? m.content : ''}`))
+      .join('\n')
+    if (!recentText.trim()) return
+    const current = longTermSummary.value
+    const sc = buildStoryContext()
+    const storyContextText = sc
+      ? [
+          sc.sceneName ? `场景: ${sc.sceneName}` : '',
+          sc.act ? `幕次/阶段: ${sc.act}` : '',
+          sc.sanity?.currentSan != null ? `SAN: ${sc.sanity.currentSan}` : '',
+          sc.sanity?.dailySanLoss != null ? `当日SAN损失: ${sc.sanity.dailySanLoss}` : '',
+          cluesObtained.value.length ? `已获得线索: ${cluesObtained.value.slice(0, 12).join('；')}` : '',
+        ].filter(Boolean).join('\n')
+      : ''
+    summarizeLongTerm(aiConfig, { recentMessagesText: recentText, currentSummary: current, storyContextText })
+      .then((next) => {
+        if (next) longTermSummary.value = next
+      })
+      .catch(() => { /* fire-and-forget; avoid unhandled rejection */ })
   }
 
   function updateCharacterHP(delta: number) {
@@ -270,6 +346,13 @@ export const useGameStore = defineStore('game', () => {
     '你是克苏鲁的呼唤第七版（COC 7th）的守密人（Keeper/KP）。',
     '你的所有故事知识来源于「故事情报」中检索到的原文片段。请严格基于这些片段进行叙事，不要凭空编造场景或 NPC。',
     '保持洛夫克拉夫特式的恐怖氛围。',
+  '',
+  '【信息披露与防剧透】',
+  '- 你掌握的“故事情报”是守密人内部参考，不代表玩家角色已知。',
+  '- 绝对禁止提前泄露未来剧情、幕后真相、隐藏动机、未出场 NPC/地点/道具的关键作用。',
+  '- 只允许披露：玩家当前所见所闻、已获得的线索（应通过 grant_clue 记录）、或基于当下证据的有限推断。',
+  '- 如果检索到的片段明显属于未来场景/后续章节，只用于你决定“现在能否给线索/是否需要引导行动”，不要直接复述给玩家。',
+  '- 叙事优先“给可操作的下一步”而不是“给完整答案”。必要时提出澄清问题（你具体检查哪里/如何做）。',
     '',
     '【严禁事项 — 违反将导致系统错误】',
     '- 绝对禁止在文字中自行编造骰子结果（如"d100: 45"、"投骰 1d8 = 4"等）。',
@@ -396,12 +479,121 @@ export const useGameStore = defineStore('game', () => {
     return processToolCallsOrchestrator(toolCalls, buildToolContext())
   }
 
+  function buildStoryContext(): StoryContext | null {
+    const scene = currentScene.value?.trim()
+    const ctx: StoryContext = {}
+    if (scene) {
+      ctx.sceneId = scene
+      ctx.sceneName = scene
+      ctx.sceneType = 'investigation'
+    }
+    if (characterSheet.value) {
+      const c = characterSheet.value
+      const san = c.derived?.san
+      const dailySanLoss = c.dailySanLoss ?? 0
+      ctx.sanity = {
+        currentSan: typeof san === 'number' ? san : undefined,
+        dailySanLoss: dailySanLoss > 0 ? dailySanLoss : undefined,
+      }
+    }
+    if (Object.keys(ctx).length === 0) return null
+    return ctx
+  }
+
   async function fetchRagContext(query: string): Promise<string> {
     if (!storyId.value) return ''
     try {
-      const ctxRes = await getContext({ query, scriptId: storyId.value, topK: 8 })
+      const ctxRes = await getContext({
+        query,
+        scriptId: storyId.value,
+        sceneId: currentScene.value?.trim() || undefined,
+        topK: 8,
+      })
       return ctxRes.context
     } catch { return '' }
+  }
+
+  const SAVE_VERSION = 1
+
+  async function saveGame(saveId: string, displayName?: string): Promise<void> {
+    const api = window.electronAPI
+    if (!api?.writeSave) throw new Error('Save not available')
+    const payload = {
+      version: SAVE_VERSION,
+      name: displayName ?? saveId,
+      storyId: storyId.value,
+      storyName: storyName.value,
+      storyOverview: storyOverview.value,
+      currentScene: currentScene.value,
+      cluesObtained: toRaw(cluesObtained.value),
+      messages: toRaw(messages.value),
+      kpMemory: toRaw(kpMemory.value),
+      longTermSummary: longTermSummary.value,
+      longTermFacts: toRaw(longTermFacts.value),
+      playerTurnCount: playerTurnCount.value,
+      gamePhase: gamePhase.value,
+      characterSheet: characterSheet.value ? toRaw(characterSheet.value) : null,
+      playerName: playerName.value,
+      selectedOccupationId: selectedOccupationId.value,
+      selectedOccupationName: selectedOccupationName.value,
+      sessionId: sessionId.value,
+    }
+    // IPC uses structured clone; Vue/Pinia reactive proxies are not cloneable.
+    const serializable = JSON.parse(JSON.stringify(payload)) as typeof payload
+    await api.writeSave(saveId, serializable)
+  }
+
+  async function loadGame(saveId: string): Promise<void> {
+    const api = window.electronAPI
+    if (!api?.readSave) throw new Error('Load not available')
+    const data = await api.readSave(saveId) as Record<string, unknown>
+    if (!data || typeof data !== 'object') throw new Error('Invalid save data')
+    const v = data.version as number | undefined
+    if (v !== SAVE_VERSION) {
+      longTermSummary.value = ''
+      longTermFacts.value = []
+      playerTurnCount.value = 0
+    }
+    if (typeof data.storyId === 'string') storyId.value = data.storyId
+    if (typeof data.storyName === 'string') storyName.value = data.storyName
+    if (typeof data.storyOverview === 'string') storyOverview.value = data.storyOverview
+    if (typeof data.currentScene === 'string') currentScene.value = data.currentScene
+    if (Array.isArray(data.cluesObtained)) cluesObtained.value = data.cluesObtained as string[]
+    if (Array.isArray(data.messages)) messages.value = data.messages as Message[]
+    if (Array.isArray(data.kpMemory)) kpMemory.value = data.kpMemory as string[]
+    if (v === SAVE_VERSION) {
+      if (typeof data.longTermSummary === 'string') longTermSummary.value = data.longTermSummary
+      if (Array.isArray(data.longTermFacts)) longTermFacts.value = data.longTermFacts as string[]
+      if (typeof data.playerTurnCount === 'number') playerTurnCount.value = data.playerTurnCount
+    }
+    if (typeof data.gamePhase === 'string') gamePhase.value = data.gamePhase as GamePhase
+    if (data.characterSheet != null) characterSheet.value = data.characterSheet as COCCharacterSheet | null
+    if (typeof data.playerName === 'string') playerName.value = data.playerName
+    if (typeof data.selectedOccupationId === 'string') selectedOccupationId.value = data.selectedOccupationId
+    if (typeof data.selectedOccupationName === 'string') selectedOccupationName.value = data.selectedOccupationName
+    if (typeof data.sessionId === 'string') sessionId.value = data.sessionId
+    isInGame.value = true
+  }
+
+  async function listSaves(): Promise<string[]> {
+    const api = window.electronAPI
+    if (!api?.listSaves) return []
+    return await api.listSaves()
+  }
+
+  async function getSaveMeta(saveId: string): Promise<{ name?: string; storyName?: string } | null> {
+    const api = window.electronAPI
+    if (!api?.readSave) return null
+    try {
+      const data = await api.readSave(saveId) as Record<string, unknown>
+      if (!data || typeof data !== 'object') return null
+      return {
+        name: typeof data.name === 'string' ? data.name : saveId,
+        storyName: typeof data.storyName === 'string' ? data.storyName : undefined,
+      }
+    } catch {
+      return null
+    }
   }
 
   async function requestOpening() {
@@ -416,9 +608,9 @@ export const useGameStore = defineStore('game', () => {
       const ragContext = await fetchRagContext('开场 故事背景 场景描述 第一幕')
       const charContext = buildCharacterContext()
       const memoryBlock = buildMemoryBlock(kpMemory.value)
-      const overviewBlock = storyOverview.value ? `\n## 故事概要\n${storyOverview.value}\n` : ''
+      const longTermBlock = longTermSummary.value ? `\n## 长期记忆（本局至今）\n${longTermSummary.value}\n` : ''
       const ragBlock = ragContext ? `\n## 故事情报\n${ragContext}\n` : ''
-      const systemPrompt = `${BASE_INSTRUCTIONS}${memoryBlock}${overviewBlock}${ragBlock}\n## 当前状态\n${charContext}\n\n请根据故事情报，向调查员做开场白，描述他们所处的场景，营造神秘与悬疑氛围。`
+      const systemPrompt = `${BASE_INSTRUCTIONS}${longTermBlock}${memoryBlock}${ragBlock}\n## 当前状态\n${charContext}\n\n请根据故事情报，向调查员做开场白，描述他们所处的场景，营造神秘与悬疑氛围。`
       const chatMessages = [{ role: 'system', content: systemPrompt }, { role: 'user', content: '请开始游戏，向调查员做开场白。' }]
 
       const fullContent = hasKpAgent()
@@ -426,6 +618,7 @@ export const useGameStore = defineStore('game', () => {
             processToolCalls,
             onStreamChunk: (preview) => updateLastMessage((m) => { if (m.role === 'kp') m.content = sanitizeKpResponse(preview) }),
             insertMessagesBeforeLast: (msgs) => insertMessagesBeforeLast(msgs as Message[]),
+            getStoryContext: buildStoryContext,
           })
         : await runDirectChatService(chatMessages as { role: 'system' | 'user' | 'assistant'; content: string }[], aiConfig, {
             onStreamChunk: (c) => updateLastMessage((m) => { if (m.role === 'kp') m.content = sanitizeKpResponse(c) }),
@@ -448,6 +641,7 @@ export const useGameStore = defineStore('game', () => {
   async function sendPlayerMessage(content: string) {
     if (!content.trim() || isSending.value) return
     addMessage({ id: generateId(), timestamp: Date.now(), role: 'player', playerName: playerName.value, content: content.trim() })
+    playerTurnCount.value += 1
     isSending.value = true
     addMessage({ id: generateId(), timestamp: Date.now(), role: 'kp', content: '', isStreaming: true })
 
@@ -459,12 +653,14 @@ export const useGameStore = defineStore('game', () => {
       const ragContext = await fetchRagContext(content)
       const charContext = buildCharacterContext()
       const memoryBlock = buildMemoryBlock(kpMemory.value)
+      const longTermBlock = longTermSummary.value ? `\n## 长期记忆（本局至今）\n${longTermSummary.value}\n` : ''
+      const recentTurnsBlock = buildRecentTurnsBlock(messages.value)
       const ragBlock = ragContext ? `\n## 故事情报\n${ragContext}` : ''
-      const systemPrompt = `${BASE_INSTRUCTIONS}${memoryBlock}${ragBlock}\n\n## 当前状态\n${charContext}`
+      const systemPrompt = `${BASE_INSTRUCTIONS}${longTermBlock}${memoryBlock}${recentTurnsBlock}${ragBlock}\n\n## 当前状态\n${charContext}`
 
       const conv = messages.value
         .filter((m) => (m.role === 'kp' || m.role === 'player') && !(m.role === 'kp' && (m as { isStreaming?: boolean }).isStreaming))
-        .slice(-18)
+        .slice(-CONVERSATION_WINDOW)
       const chatMessages = [
         { role: 'system', content: systemPrompt },
         ...conv.map((m) => ({
@@ -478,6 +674,7 @@ export const useGameStore = defineStore('game', () => {
             processToolCalls,
             onStreamChunk: (preview) => updateLastMessage((m) => { if (m.role === 'kp') m.content = sanitizeKpResponse(preview) }),
             insertMessagesBeforeLast: (msgs) => insertMessagesBeforeLast(msgs as Message[]),
+            getStoryContext: buildStoryContext,
           })
         : await runDirectChatService(chatMessages as { role: 'system' | 'user' | 'assistant'; content: string }[], aiConfig, {
             onStreamChunk: (c) => updateLastMessage((m) => { if (m.role === 'kp') m.content = sanitizeKpResponse(c) }),
@@ -487,6 +684,9 @@ export const useGameStore = defineStore('game', () => {
         kpMemory.value = [...kpMemory.value.slice(-MAX_MEMORY_ENTRIES + 1), sanitizeKpResponse(fullContent)]
       }
       updateLastMessage((m) => { if (m.role === 'kp') m.isStreaming = false })
+      if (playerTurnCount.value >= LONG_TERM_SUMMARY_EVERY_N_TURNS && playerTurnCount.value % LONG_TERM_SUMMARY_EVERY_N_TURNS === 0) {
+        runLongTermSummarization()
+      }
     } catch (e) {
       updateLastMessage((m) => {
         if (m.role === 'kp') { m.content = '[错误: ' + (e instanceof Error ? e.message : String(e)) + ']'; m.isStreaming = false }
@@ -498,9 +698,13 @@ export const useGameStore = defineStore('game', () => {
     sessionId,
     storyId,
     storyName,
+    storyOverview,
     currentScene,
     cluesObtained,
     messages,
+    kpMemory,
+    longTermSummary,
+    longTermFacts,
     isInGame,
     isSending,
     playerName,
@@ -525,5 +729,9 @@ export const useGameStore = defineStore('game', () => {
     updateCharacterLuck,
     requestOpening,
     sendPlayerMessage,
+    saveGame,
+    loadGame,
+    listSaves,
+    getSaveMeta,
   }
 })

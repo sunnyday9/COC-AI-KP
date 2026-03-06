@@ -718,6 +718,34 @@ function resolveProvider(providerName, userBaseUrl) {
 /* ═══════════════════ Unified invokeChat ═══════════════════ */
 
 async function invokeChat(params) {
+  // E2E: return deterministic local mock only when E2E/CI context is set
+  if (process.env.E2E_MOCK_AI === '1' && (process.env.E2E_FORCE_PROD === '1' || process.env.CI === '1')) {
+    const messages = Array.isArray(params?.messages) ? params.messages : []
+    const onChunk = typeof params?.onChunk === 'function' ? params.onChunk : null
+    const system0 = messages?.[0]?.role === 'system' ? String(messages?.[0]?.content || '') : ''
+    const lastUser = [...messages].reverse().find((m) => m?.role === 'user' && typeof m?.content === 'string')
+    const userText = (lastUser?.content || '').trim()
+
+    // Intent classifier call (kpGraph.mjs expects a single English keyword)
+    if (system0.includes('只回复一个英文意图关键词')) {
+      return { stream: false, content: 'narrative' }
+    }
+
+    const content = userText
+      ? `【E2E】已收到你的行动：${userText}\n\n我会基于已索引的故事信息推进剧情，并在需要时请求检定或给出线索。`
+      : '【E2E】我已准备好主持本次跑团。请描述你的行动。'
+
+    // Avoid triggering text-simulation validation patterns (d100 / HP / SAN etc)
+    const safe = content
+      .replace(/\bd\d+\s*[:=：]\s*\d+/gi, '')
+      .replace(/\bd100\b/gi, '')
+
+    if (params?.stream && onChunk) {
+      onChunk(safe)
+    }
+    return { stream: false, content: safe }
+  }
+
   const { provider, model, baseUrl, apiKey: paramApiKey, messages, temperature, maxTokens, stream } = params
   const onChunk = typeof params.onChunk === 'function' ? params.onChunk : null
   const settings = await readSettings()

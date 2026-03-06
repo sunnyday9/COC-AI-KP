@@ -5,8 +5,18 @@ import { PRESET_PROVIDERS, CUSTOM_PROVIDERS } from '../services/ai/types'
 
 export type { AIProviderConfig }
 
+export type RAGEmbeddingProvider = 'builtin' | 'api'
+
+export interface RAGSettings {
+  useEmbeddings: boolean
+  /** 'builtin' = preloaded local model (no API); 'api' = use AI Base URL + API Key + model */
+  provider: RAGEmbeddingProvider
+  model: string
+}
+
 export interface AppSettings {
   ai: AIProviderConfig
+  rag?: RAGSettings
   syncServerUrl: string
 }
 
@@ -14,6 +24,12 @@ const ALL_PROVIDER_IDS = new Set<string>([
   ...PRESET_PROVIDERS.map((p) => p.id),
   ...CUSTOM_PROVIDERS.map((p) => p.id),
 ])
+
+const defaultRAG: RAGSettings = {
+  useEmbeddings: false,
+  provider: 'builtin',
+  model: 'text-embedding-3-small',
+}
 
 const defaultSettings: AppSettings = {
   ai: {
@@ -23,6 +39,7 @@ const defaultSettings: AppSettings = {
     temperature: 0.7,
     maxTokens: 2048,
   },
+  rag: defaultRAG,
   syncServerUrl: 'http://localhost:3000',
 }
 
@@ -46,7 +63,13 @@ export const useSettingsStore = defineStore('settings', () => {
           maxTokens: typeof rawAi.maxTokens === 'number' ? rawAi.maxTokens : defaultSettings.ai.maxTokens,
         }
         const syncServerUrl = typeof saved.syncServerUrl === 'string' ? saved.syncServerUrl : defaultSettings.syncServerUrl
-        settings.value = { ai, syncServerUrl }
+        const rawRag = saved.rag && typeof saved.rag === 'object' ? saved.rag as Record<string, unknown> : {}
+        const rag: RAGSettings = {
+          useEmbeddings: rawRag.useEmbeddings === true,
+          provider: rawRag.provider === 'api' ? 'api' : 'builtin',
+          model: typeof rawRag.model === 'string' ? rawRag.model : defaultRAG.model,
+        }
+        settings.value = { ai, rag, syncServerUrl }
       }
     }
   }

@@ -446,6 +446,100 @@ interface COCCharacterSheetExtensions {
 
 ---
 
+### 4.2 KP LangGraph 多子 Agent 编排（已接入 storyContext）
+
+- **顶层编排结构**（见 `electron/agent/kpGraph.mjs`）：
+  - `START → analyzeInput → routeByIntent → {generic/combat/sanity/narrative/resource Plan+Generate} → validate → (forceTools?) → END`
+  - 路由规则（`routeByIntent` + `routeByIntentEdge`）：
+    - `combat` → `combatPlan/combatGenerate`（战斗子 Agent）
+    - `san_encounter` → `sanityPlan/sanityGenerate`（理智子 Agent）
+    - `investigate` / `explore` / `talk_npc` / `move` / `tool_continuation` → `narrativePlan/narrativeGenerate`（叙事/调查子 Agent）
+    - `use_item` → `resourcePlan/resourceGenerate`（资源子 Agent）
+    - 其余 → `genericPlan/genericGenerate`（generic 兜底 Agent）
+
+- **KPState 关键字段**（LangGraph Annotation Root）：
+  - `messages`：对话消息数组；
+  - `playerIntent`：当前意图（见 INTENT_TYPES）；
+  - `agentType`：当前轮选中的子 Agent（generic/combat/sanity/narrative/resource）；
+  - `requiredTools` / `toolPlan`：Plan 节点给本轮设定的必需工具及自然语言规划；
+  - `toolCalls`：Generate/forceTools 节点输出的工具调用；
+  - `validationResult` / `retryCount`：验证与重试状态；
+  - **新增** `storyContext`：从 Electron/前端注入的结构化故事上下文；
+  - **新增** `narrativeStallLevel`：简单的叙事停滞计数器，用于强制线索/切场景。
+
+- **storyContext 结构（最小可用版本）**：
+  - 顶层字段（供叙事子 Agent 使用）：
+    - `sceneId?: string` / `sceneName?: string` / `sceneType?: string`；
+    - `act?: 'hook' | 'investigation' | 'confrontation' | 'aftermath' | string`；
+    - `openClues?: string[]`（待触达或未解决的线索摘要）；
+    - `activeNPCs?: Array<{ name?: string; role?: string }>`（当前场景重要 NPC）。
+  - 可选子结构 `sanity`（供 sanityAgent Plan 强化使用）：
+    - `currentSan?: number`；
+    - `dailySanLoss?: number`；
+    - `potentialLoss?: number`（本次事件预计 SAN 损失上限）。
+  - 前端通过 `kp:invoke` / `kp:invokeStream` IPC 调用时，以 `params.storyContext` 传入，Electron 层直接透传到 KP 图初始 state。
+
+- **叙事进度控制（analyzeNarrativeProgress + narrativePlan/genericPlan）**：
+  - 新增 `analyzeNarrativeProgress(state)`：
+    - 输入：`playerIntent`、本轮 `toolCalls`、`narrativeStallLevel`；
+    - 输出：`{ nextStallLevel, shouldForceClue, shouldForceScene }`；
+    - 规则：在叙事相关意图下且本轮未调用 `grant_clue` / `transition_scene` / `skill_check` 时，`stallLevel++`，使用上述任一工具时重置为 0，并做 0–10 的 clamp。
+  - 在 `narrativePlan` / `genericPlan` 中：
+    - 当 `shouldForceScene` 为真且当前 agent 为 narrative 时，追加 `transition_scene` 到 `requiredTools`；
+    - 否则当 `shouldForceClue` 为真时，追加 `grant_clue`；
+    - 将 `nextStallLevel` 写回 state（由 Plan 节点返回 `narrativeStallLevel`），实现跨轮记忆。
+  - 在 `createGenerateNode(..., 'narrative' | 'generic')` 中：
+    - 读取 `state.storyContext` 并将其摘要以「当前故事上下文」小节追加到 system message；
+    - 明确要求：叙事和行动选项尽量围绕 `openClues` 与 `activeNPCs` 展开，玩家跑题时用简短话语拉回当前场景或主线。
+
+- **sanityAgent & resourceAgent 的 Plan 规则增强**：
+  - sanityAgent（`sanityPlan` + `agentKind === 'sanity'`）：
+    - 若 `playerIntent === 'san_encounter'` 且 `storyContext.sanity` 提供 `currentSan` / `dailySanLoss` / `potentialLoss`：
+      - 当单次潜在损失 `potentialLoss >= 5` 时，将 `trigger_insanity` 加入 `requiredTools`；
+      - 或当 `dailySanLoss + potentialLoss >= floor(currentSan / 5)` 时，同样加入 `trigger_insanity`；
+      - 与工具层的 `san_check` / `trigger_insanity` 逻辑配合，形成「必检定 + 必判疯狂」的硬约束。
+  - resourceAgent（`resourcePlan` + `agentKind === 'resource'`）：
+    - 仅在 `playerIntent === 'use_item'` 时生效；
+    - 从最近一条 user 消息文本中做关键词匹配：
+      - 包含「luck/幸运」→ 追加 `spend_luck`；
+      - 包含「MP/魔法值/法力」→ 追加 `adjust_mp`；
+      - 包含「SAN/理智」→ 追加 `adjust_san`。
+
+- **genericAgent 护栏**：
+  - Plan 层：在 `createPlanNode('generic')` 中对 `requiredTools` 做一次过滤，剔除 `transition_scene` 与 `grant_clue`，避免 genericAgent 直接推动剧情。
+  - Generate 层：在 `createGenerateNode(..., 'generic')` 中追加「genericAgent 限制」：
+    - 只做规则问答/简单闲聊；
+    - 回答后用一两句自然过渡，把话题拉回当前场景或主线；
+    - 不主动调用高影响剧情工具（transition_scene/grant_clue 等）。
+
+### 4.3 RAG 与 storyContext 数据源（已实现）
+
+- **storyContext 来源**：由前端在每次 KP 调用前从游戏状态构建并传入，不再依赖 RAG 产出。
+  - 实现位置：`gameStore.buildStoryContext()`（见 `src/stores/gameStore.ts`），类型定义见 `src/types/storyContext.ts`。
+  - 字段来源：`sceneId`/`sceneName` 来自 `currentScene`（由 `transition_scene` 工具更新）；`sanity.currentSan`/`sanity.dailySanLoss` 来自 `characterSheet.derived.san` 与 `characterSheet.dailySanLoss`。
+  - 传递路径：`runKpAgentLoop` 回调中的 `getStoryContext` 每轮调用 `buildStoryContext()`，`kpSessionService.kpInvokeOnce` 将得到的 `storyContext` 放入 IPC params，Electron `kp:invoke`/`kp:invokeStream` 透传至 LangGraph 初始 state。
+
+- **RAG 检索与 sceneId**：RAG 仅负责「按玩家消息检索剧本片段」并注入 system prompt 的「故事情报」块。
+  - 在 `gameStore.fetchRagContext(query)` 中调用 `getContext({ query, scriptId, sceneId: currentScene.value || undefined, topK: 8 })`。当存在当前场景时传入 `sceneId`，向量库会按 `metadata.scene_id` 过滤（若块带 scene_id，则只返回该场景相关块；否则退化为全剧本检索）。
+
+- **结构化剧本分块（可选）**：Markdown 剧本若遵循约定标题，索引时可产出带 `type` 与 `sceneId` 的 RAG 块，便于按场景/类型过滤。
+  - 约定：`## 场景：<name>` 或 `## 场景 <name>` 标记场景；`### 线索` / `### 线索：` 为线索块；`### NPC` / `### 人物` 为 NPC 块。实现见 `storyService.markdownToStructuredChunks`。
+  - 索引：`fileToChunks(..., { useStructuredMarkdown: true })` 用于 .md 文件（`storyStore.indexStoryForRag` 对 .md 已启用），产出 `type: 'scene' | 'clue' | 'npc' | 'rule'` 且含 `metadata.sceneId` 的块；向量库 `normalizeMetadata` 将 `sceneId` 存为 `scene_id`，`queryChunks` 支持按 `sceneId`/`type` 过滤。
+
+### 4.4 RAG 语义检索（嵌入向量，Part C）
+
+- **默认内置模型**：当 `rag.useEmbeddings` 为 true 且 `rag.provider === 'builtin'` 时，使用应用内预置的本地中文嵌入模型（`@xenova/transformers` + `Xenova/text2vec-base-chinese-sentence`），无需 API Key，首次使用会自动下载模型。
+- **可选用户 API**：当 `rag.provider === 'api'` 时，使用上方 AI 的 Base URL 与 API Key 调用 OpenAI 兼容的 `/v1/embeddings`，模型名由 `rag.model` 指定（默认 `text-embedding-3-small`）。
+- **实现**：`electron/rag/embedding.mjs` 提供 `createBuiltinEmbedder()`（本地）与 `createEmbedder({ baseUrl, apiKey, model })`（API）；`vectorStore` 与 `ragHandlers` 根据 `settings.rag.provider` 选择其一并注入。
+- **配置**：设置 → 服务配置 →「使用语义检索」→ 选择「内置模型」或「使用我的嵌入 API」；选 API 时需配置上方 AI 的 Base URL 与 API Key，并可填写嵌入模型名。
+- **嵌入模型建议**（中英剧本兼顾、性价比与质量平衡）：
+  - **OpenAI**：`text-embedding-3-small`（1536 维，便宜、中英均可）、`text-embedding-3-large`（更强、更贵）。
+  - **Azure OpenAI**：同上模型名，Base URL 与 API Key 使用 Azure 端点与 key。
+  - **本地/自托管**：任何兼容 OpenAI 嵌入 API 的服务（如 [Ollama](https://ollama.com) 搭配 `nomic-embed-text`、[LocalAI](https://localai.io)、[sentence-transformers 封装服务](https://www.sbert.net) 等），将 Base URL 指向该服务即可；若用中文为主，可选多语言模型如 `paraphrase-multilingual-MiniLM-L12-v2` 的 API 封装。
+  - **不启用**：保持 `useEmbeddings` 关闭则仅用 TF-IDF，无需 API、离线可用。
+
+---
+
 ## 五、建议实现路线图
 
 ### Phase 1 — 核心战斗与理智（最高优先级）

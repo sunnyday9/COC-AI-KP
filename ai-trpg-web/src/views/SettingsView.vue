@@ -315,6 +315,33 @@ async function handleTest() {
             <span class="text-cthulhu-300 text-xs">✓</span>
             <span class="text-xs text-cthulhu-200">RAG 向量检索已内置于 Electron，无需单独启动服务</span>
           </div>
+          <div v-if="settings.rag" class="space-y-3">
+            <label class="flex items-center gap-2 cursor-pointer">
+              <input v-model="settings.rag.useEmbeddings" type="checkbox"
+                     class="rounded border-gray-600 bg-gray-800 text-eldritch-500 focus:ring-eldritch-500" />
+              <span class="text-xs font-medium text-gray-400">使用语义检索（嵌入向量）</span>
+            </label>
+            <p class="text-[11px] text-gray-600">关闭则仅用 TF-IDF。开启后可选：内置模型（无需 API）或使用自己的嵌入 API。</p>
+            <div v-if="settings.rag.useEmbeddings" class="space-y-3 pl-1 border-l-2 border-gray-700/60">
+              <div class="flex flex-col gap-2">
+                <label class="flex items-center gap-2 cursor-pointer">
+                  <input v-model="settings.rag.provider" type="radio" value="builtin"
+                         class="rounded-full border-gray-600 bg-gray-800 text-eldritch-500 focus:ring-eldritch-500" />
+                  <span class="text-xs font-medium text-gray-400">内置中文嵌入模型（无需 API，首次使用会下载）</span>
+                </label>
+                <label class="flex items-center gap-2 cursor-pointer">
+                  <input v-model="settings.rag.provider" type="radio" value="api"
+                         class="rounded-full border-gray-600 bg-gray-800 text-eldritch-500 focus:ring-eldritch-500" />
+                  <span class="text-xs font-medium text-gray-400">使用我的嵌入 API（上方 AI 的 Base URL 与 API Key）</span>
+                </label>
+              </div>
+              <div v-if="settings.rag.provider === 'api'">
+                <label class="block text-xs font-medium text-gray-400 mb-1.5">嵌入模型名</label>
+                <input v-model="settings.rag.model" type="text" placeholder="text-embedding-3-small"
+                       class="gothic-input text-sm" />
+              </div>
+            </div>
+          </div>
           <div>
             <label class="block text-xs font-medium text-gray-400 mb-1.5">同步服务 URL</label>
             <input v-model="settings.syncServerUrl" type="text" placeholder="http://localhost:3000"

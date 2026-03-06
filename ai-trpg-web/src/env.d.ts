@@ -33,9 +33,10 @@ interface ElectronAPI {
   getSettings: () => Promise<Record<string, unknown>>
   setSettings: (settings: Record<string, unknown>) => Promise<void>
 
-  // Stories (file: listStories / readStory / importStory / deleteStory)
+  // Stories (file: listStories / readStory / readStoryForRag / importStory / deleteStory)
   listStories: () => Promise<{ name: string; path: string }[]>
   readStory: (filePath: string) => Promise<string>
+  readStoryForRag: (filePath: string) => Promise<string>
   importStory: () => Promise<{ ok: boolean; error?: string; path?: string; name?: string }>
   deleteStory: (filePath: string) => Promise<void>
 

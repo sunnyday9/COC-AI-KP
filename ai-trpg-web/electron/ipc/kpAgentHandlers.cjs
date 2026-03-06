@@ -104,7 +104,7 @@ async function directFallback(msgs, pProvider, pModel, pBaseUrl, pApiKey, pTemp,
 
 function registerKPAgentHandlers() {
   ipcMain.handle('kp:invoke', async (_, params) => {
-    const { messages, provider: pProvider, model: pModel, baseUrl: pBaseUrl, apiKey: pApiKey, temperature: pTemp, maxTokens: pMax } = params || {}
+    const { messages, provider: pProvider, model: pModel, baseUrl: pBaseUrl, apiKey: pApiKey, temperature: pTemp, maxTokens: pMax, storyContext } = params || {}
     if (!Array.isArray(messages) || messages.length === 0) {
       return { content: '' }
     }
@@ -112,7 +112,7 @@ function registerKPAgentHandlers() {
     try {
       const invokeKPAgent = await getInvokeKPAgent()
       const invokeLLM = buildInvokeLLM(pProvider, pModel, pBaseUrl, pApiKey, pTemp, pMax)
-      const { content, toolCalls } = await invokeKPAgent(messages, invokeLLM)
+      const { content, toolCalls } = await invokeKPAgent(messages, invokeLLM, storyContext)
       if (content || (toolCalls && toolCalls.length > 0)) {
         return { content, toolCalls }
       }
@@ -128,7 +128,7 @@ function registerKPAgentHandlers() {
   })
 
   ipcMain.handle('kp:invokeStream', async (event, params) => {
-    const { messages, provider: pProvider, model: pModel, baseUrl: pBaseUrl, apiKey: pApiKey, temperature: pTemp, maxTokens: pMax } = params || {}
+    const { messages, provider: pProvider, model: pModel, baseUrl: pBaseUrl, apiKey: pApiKey, temperature: pTemp, maxTokens: pMax, storyContext } = params || {}
     const streamId = 'kp_stream_' + Date.now() + '_' + Math.random().toString(36).slice(2, 9)
     if (!Array.isArray(messages) || messages.length === 0) {
       event.sender.send('kp:stream', { streamId, type: 'end', content: '', toolCalls: undefined })
@@ -142,7 +142,7 @@ function registerKPAgentHandlers() {
       try {
         const invokeKPAgent = await getInvokeKPAgent()
         const invokeLLM = buildStreamInvokeLLM(pProvider, pModel, pBaseUrl, pApiKey, pTemp, pMax, event, streamId)
-        const result = await invokeKPAgent(messages, invokeLLM)
+        const result = await invokeKPAgent(messages, invokeLLM, storyContext)
         content = result.content ?? ''
         toolCalls = result.toolCalls
       } catch (err) {

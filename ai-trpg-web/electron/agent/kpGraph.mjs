@@ -19,15 +19,32 @@ import { StateGraph, Annotation, START, END } from '@langchain/langgraph'
 /*  State                                                              */
 /* ================================================================== */
 
+/**
+ * KPState fields:
+ * - messages: LangGraph message array
+ * - playerIntent: current classified intent
+ * - requiredTools: tools this turn must call
+ * - toolPlan: natural-language tool plan
+ * - response: assistant narrative text
+ * - toolCalls: tools selected by the LLM this turn
+ * - retryCount: validation retry counter
+ * - validationResult: 'pending' | 'valid' | 'missing_tools' | 'max_retries'
+ * - agentType: 'generic' | 'combat' | 'sanity' | 'narrative' | 'resource'
+ * - storyContext: optional structured story state injected from Electron/front-end
+ * - narrativeStallLevel: simple counter to detect long-term narrative stalling
+ */
 const KPState = Annotation.Root({
-  messages:         Annotation({ reducer: (_, r) => (Array.isArray(r) ? r : [r]), default: () => [] }),
-  playerIntent:     Annotation({ reducer: (_, r) => r, default: () => 'narrative' }),
-  requiredTools:    Annotation({ reducer: (_, r) => r, default: () => [] }),
-  toolPlan:         Annotation({ reducer: (_, r) => r, default: () => '' }),
-  response:         Annotation({ reducer: (_, r) => r, default: () => '' }),
-  toolCalls:        Annotation({ reducer: (_, r) => r, default: () => undefined }),
-  retryCount:       Annotation({ reducer: (_, r) => r, default: () => 0 }),
-  validationResult: Annotation({ reducer: (_, r) => r, default: () => 'pending' }),
+  messages:            Annotation({ reducer: (_, r) => (Array.isArray(r) ? r : [r]), default: () => [] }),
+  playerIntent:        Annotation({ reducer: (_, r) => r, default: () => 'narrative' }),
+  requiredTools:       Annotation({ reducer: (_, r) => r, default: () => [] }),
+  toolPlan:            Annotation({ reducer: (_, r) => r, default: () => '' }),
+  response:            Annotation({ reducer: (_, r) => r, default: () => '' }),
+  toolCalls:           Annotation({ reducer: (_, r) => r, default: () => undefined }),
+  retryCount:          Annotation({ reducer: (_, r) => r, default: () => 0 }),
+  validationResult:    Annotation({ reducer: (_, r) => r, default: () => 'pending' }),
+  agentType:           Annotation({ reducer: (_, r) => r, default: () => 'generic' }),
+  storyContext:        Annotation({ reducer: (_, r) => r, default: () => null }),
+  narrativeStallLevel: Annotation({ reducer: (_, r) => r, default: () => 0 }),
 })
 
 /* ================================================================== */
@@ -138,6 +155,60 @@ function analyzeToolContinuation(messages) {
 }
 
 /* ================================================================== */
+/*  Narrative progress analysis                                       */
+/* ================================================================== */
+
+/**
+ * Lightweight narrative stall detector.
+ *
+ * Uses a simple counter on KPState instead of re-parsing full history so we
+ * can gradually escalate from "suggest giving a线索" → "必须给线索" → "必须切场景"。
+ */
+function analyzeNarrativeProgress(state) {
+  var intent = state.playerIntent || 'narrative'
+  var stallLevel = state.narrativeStallLevel || 0
+  var toolCalls = state.toolCalls || []
+
+  var progressTools = ['grant_clue', 'transition_scene', 'skill_check']
+  var hasProgressTool = false
+  if (toolCalls && toolCalls.length > 0) {
+    for (var i = 0; i < toolCalls.length; i++) {
+      var name = toolCalls[i].name || ''
+      for (var j = 0; j < progressTools.length; j++) {
+        if (name === progressTools[j]) { hasProgressTool = true; break }
+      }
+      if (hasProgressTool) break
+    }
+  }
+
+  var isNarrativeIntent =
+    intent === 'investigate' ||
+    intent === 'explore' ||
+    intent === 'talk_npc' ||
+    intent === 'move' ||
+    intent === 'narrative' ||
+    intent === 'tool_continuation'
+
+  if (isNarrativeIntent && !hasProgressTool) {
+    stallLevel = stallLevel + 1
+  } else if (hasProgressTool) {
+    stallLevel = 0
+  }
+
+  if (stallLevel < 0) stallLevel = 0
+  if (stallLevel > 10) stallLevel = 10
+
+  var shouldForceClue = stallLevel >= 2
+  var shouldForceScene = stallLevel >= 4
+
+  return {
+    nextStallLevel: stallLevel,
+    shouldForceClue: shouldForceClue,
+    shouldForceScene: shouldForceScene,
+  }
+}
+
+/* ================================================================== */
 /*  Node 1: Analyze Input                                              */
 /* ================================================================== */
 
@@ -173,6 +244,25 @@ function createAnalyzeNode(invokeLLM) {
     }
 
     return { playerIntent: playerIntent, retryCount: 0 }
+  }
+}
+
+/* ================================================================== */
+/*  Node 1.5: Route By Intent (programmatic)                           */
+/* ================================================================== */
+
+function createRouteByIntentNode() {
+  return async function routeByIntent(state) {
+    var intent = state.playerIntent || 'narrative'
+    var agent = 'generic'
+    if (intent === 'combat') agent = 'combat'
+    else if (intent === 'san_encounter') agent = 'sanity'
+    else if (intent === 'investigate' || intent === 'explore' || intent === 'talk_npc' || intent === 'move' || intent === 'tool_continuation') {
+      agent = 'narrative'
+    } else if (intent === 'use_item') {
+      agent = 'resource'
+    }
+    return { agentType: agent }
   }
 }
 
@@ -234,10 +324,15 @@ var TOOL_PLANS = {
   },
 }
 
-function createPlanNode() {
+function createPlanNode(agentKind) {
   return async function planTools(state) {
     var intent = state.playerIntent || 'narrative'
     var plan = TOOL_PLANS[intent] || TOOL_PLANS.narrative
+
+    var stallInfo = null
+    if (agentKind === 'narrative' || agentKind === 'generic') {
+      stallInfo = analyzeNarrativeProgress(state)
+    }
 
     var continuation = analyzeToolContinuation(state.messages || [])
     var required = plan.required.slice()
@@ -249,9 +344,68 @@ function createPlanNode() {
       }
     }
 
+    // Phase 2: narrative/generic hard constraints based on stall analysis
+    if (stallInfo && (intent === 'investigate' || intent === 'explore' || intent === 'talk_npc' || intent === 'move' || intent === 'narrative' || intent === 'tool_continuation')) {
+      if (stallInfo.shouldForceScene && agentKind === 'narrative') {
+        if (required.indexOf('transition_scene') < 0) required.push('transition_scene')
+      } else if (stallInfo.shouldForceClue) {
+        if (required.indexOf('grant_clue') < 0) required.push('grant_clue')
+      }
+    }
+
+    // Phase 3: sanityAgent flow based on simple sanity context
+    if (agentKind === 'sanity' && intent === 'san_encounter') {
+      var sanityCtx = state.storyContext && state.storyContext.sanity ? state.storyContext.sanity : null
+      if (sanityCtx) {
+        var currentSan = typeof sanityCtx.currentSan === 'number' ? sanityCtx.currentSan : null
+        var dailyLoss = typeof sanityCtx.dailySanLoss === 'number' ? sanityCtx.dailySanLoss : null
+        var potentialLoss = typeof sanityCtx.potentialLoss === 'number' ? sanityCtx.potentialLoss : null
+
+        var shouldConsiderTrigger =
+          (potentialLoss !== null && potentialLoss >= 5) ||
+          (currentSan !== null && currentSan > 0 && dailyLoss !== null && potentialLoss !== null &&
+            (dailyLoss + potentialLoss) >= Math.floor(currentSan / 5))
+
+        if (shouldConsiderTrigger && required.indexOf('trigger_insanity') < 0) {
+          required.push('trigger_insanity')
+        }
+      }
+    }
+
+    // Phase 3: resourceAgent structured tool mapping
+    if (agentKind === 'resource' && intent === 'use_item') {
+      var msgs = state.messages || []
+      var lastUser = null
+      for (var u = msgs.length - 1; u >= 0; u--) {
+        if (msgs[u].role === 'user') { lastUser = msgs[u]; break }
+      }
+      var text = (lastUser && lastUser.content) ? String(lastUser.content).toLowerCase() : ''
+
+      if (/luck|幸运/.test(text) && required.indexOf('spend_luck') < 0) {
+        required.push('spend_luck')
+      }
+      if (/(mp|魔法值|法力)/.test(text) && required.indexOf('adjust_mp') < 0) {
+        required.push('adjust_mp')
+      }
+      if (/(san|理智)/.test(text) && required.indexOf('adjust_san') < 0) {
+        required.push('adjust_san')
+      }
+    }
+
+    // Phase 4: genericAgent guardrails — never force high-impact narrative tools
+    if (agentKind === 'generic' && required.length > 0) {
+      var filtered = []
+      for (var g = 0; g < required.length; g++) {
+        if (required[g] === 'transition_scene' || required[g] === 'grant_clue') continue
+        filtered.push(required[g])
+      }
+      required = filtered
+    }
+
     return {
       requiredTools: required,
       toolPlan: plan.plan,
+      narrativeStallLevel: stallInfo ? stallInfo.nextStallLevel : (state.narrativeStallLevel || 0),
     }
   }
 }
@@ -260,11 +414,12 @@ function createPlanNode() {
 /*  Node 3: Generate (main LLM call)                                   */
 /* ================================================================== */
 
-function createGenerateNode(invokeLLM) {
+function createGenerateNode(invokeLLM, agentKind) {
   return async function generate(state) {
     var msgs = state.messages || []
     var toolPlan = state.toolPlan || ''
     var requiredTools = state.requiredTools || []
+    var storyContext = state.storyContext || null
 
     var toolInstruction = ''
     if (requiredTools.length > 0) {
@@ -276,9 +431,64 @@ function createGenerateNode(invokeLLM) {
       toolInstruction += '先调用工具，然后写简短的过渡叙事。不要在文字中编造工具应该返回的数值。\n'
     }
 
-    var hintBlock = '### 行动计划\n' + toolPlan + toolInstruction +
+    var storyContextBlock = ''
+    if (storyContext && (agentKind === 'narrative' || agentKind === 'generic')) {
+      var sc = storyContext
+      storyContextBlock = '\n\n### 当前故事上下文（仅供你参考，不要直白念出字段名）\n'
+      if (sc.sceneName || sc.sceneId) {
+        storyContextBlock += '- 场景: ' + (sc.sceneName || sc.sceneId) + (sc.sceneType ? '（类型: ' + sc.sceneType + '）' : '') + '\n'
+      }
+      if (typeof sc.act === 'string') {
+        storyContextBlock += '- 当前幕次/阶段: ' + sc.act + '\n'
+      }
+      if (Array.isArray(sc.openClues) && sc.openClues.length > 0) {
+        storyContextBlock += '- 未解决线索:\n'
+        for (var oc = 0; oc < sc.openClues.length; oc++) {
+          storyContextBlock += '  - ' + String(sc.openClues[oc]) + '\n'
+        }
+      }
+      if (Array.isArray(sc.activeNPCs) && sc.activeNPCs.length > 0) {
+        storyContextBlock += '- 场景中重要 NPC:\n'
+        for (var an = 0; an < sc.activeNPCs.length; an++) {
+          var npc = sc.activeNPCs[an]
+          if (npc && (npc.name || npc.role)) {
+            storyContextBlock += '  - ' + (npc.name || 'NPC') + (npc.role ? '（' + npc.role + '）' : '') + '\n'
+          }
+        }
+      }
+      storyContextBlock += '请让叙事和行动选项尽量围绕上述线索和 NPC 展开。玩家跑题时，可以简短回应，但需要把话题拉回当前场景或主线。\n'
+    }
+
+    var agentHint = ''
+    if (agentKind === 'combat') {
+      agentHint =
+        '\n\n【战斗守则】所有攻击/防御/伤害必须通过工具链完成（skill_check → roll_dice → adjust_hp）。' +
+        '禁止在文字中编造命中结果、伤害点数或 HP 变化。'
+    } else if (agentKind === 'sanity') {
+      agentHint =
+        '\n\n【理智守则】所有 SAN 检定与疯狂状态变化必须通过 san_check / trigger_insanity / adjust_san 工具完成，' +
+        '禁止在文字中编造 SAN 数值或疯狂状态变更。'
+    } else if (agentKind === 'narrative' || agentKind === 'generic') {
+      agentHint =
+        '\n\n【叙事守则】在每一轮回复中，请：' +
+        '1）先用 1～2 句通过视觉/听觉/气味等感官强化当前场景氛围；' +
+        '2）明确反馈玩家上一行动的直接结果；' +
+        '3）给出 2～3 个清晰的下一步可选行动（使用列表或显式提示“你可以选择：…”），引导玩家与场景中的线索或 NPC 互动。' +
+        '如需要推进剧情或给出重要信息，请优先调用 transition_scene / grant_clue / skill_check 等工具，而不是单纯在文本中硬塞信息。'
+    }
+
+    if (agentKind === 'generic') {
+      agentHint +=
+        '\n\n【genericAgent 限制】你主要负责规则问答、规则说明或简单闲聊：' +
+        '1）简要回答后，应自动补上一句自然的过渡，把话题拉回当前场景或主线；' +
+        '2）不要主动调用 transition_scene 或 grant_clue 等高影响剧情工具，把这些留给叙事 Agent；' +
+        '3）如需要让玩家回到故事，请用自然语言提醒当前场景和可以采取的行动，而不是开启全新世界观或无关剧情。'
+    }
+
+    var hintBlock = '### 行动计划\n' + toolPlan + toolInstruction + storyContextBlock +
       '\n\n【输出规则】只输出给调查员看的剧情与对话。不要出现规则说明、意图分类、工具名称等内部内容。' +
-      '绝对禁止在文字中编造骰子结果或数值变化，所有检定和数值变更必须通过工具实现。'
+      '绝对禁止在文字中编造骰子结果或数值变化，所有检定和数值变更必须通过工具实现。' +
+      agentHint
 
     var enhancedMsgs = msgs.slice()
     var systemIdx = -1
@@ -415,6 +625,15 @@ function createForceToolNode(invokeLLM) {
 /*  Routing function                                                   */
 /* ================================================================== */
 
+function routeByIntentEdge(state) {
+  var intent = state.playerIntent || 'narrative'
+  if (intent === 'combat') return 'combat'
+  if (intent === 'san_encounter') return 'sanity'
+  if (intent === 'investigate' || intent === 'explore' || intent === 'talk_npc' || intent === 'move' || intent === 'tool_continuation') return 'narrative'
+  if (intent === 'use_item') return 'resource'
+  return 'generic'
+}
+
 function routeAfterValidation(state) {
   var result = state.validationResult || 'valid'
   if (result === 'valid' || result === 'max_retries') return 'end'
@@ -428,14 +647,45 @@ function routeAfterValidation(state) {
 export function createKPGraph(invokeLLM) {
   var graph = new StateGraph(KPState)
     .addNode('analyzeInput', createAnalyzeNode(invokeLLM))
-    .addNode('planTools', createPlanNode())
-    .addNode('generate', createGenerateNode(invokeLLM))
+    .addNode('routeByIntent', createRouteByIntentNode())
+    // generic agent
+    .addNode('genericPlan', createPlanNode('generic'))
+    .addNode('genericGenerate', createGenerateNode(invokeLLM, 'generic'))
+    // combat agent
+    .addNode('combatPlan', createPlanNode('combat'))
+    .addNode('combatGenerate', createGenerateNode(invokeLLM, 'combat'))
+    // sanity agent
+    .addNode('sanityPlan', createPlanNode('sanity'))
+    .addNode('sanityGenerate', createGenerateNode(invokeLLM, 'sanity'))
+    // narrative agent
+    .addNode('narrativePlan', createPlanNode('narrative'))
+    .addNode('narrativeGenerate', createGenerateNode(invokeLLM, 'narrative'))
+    // resource agent
+    .addNode('resourcePlan', createPlanNode('resource'))
+    .addNode('resourceGenerate', createGenerateNode(invokeLLM, 'resource'))
+    // shared validation / force-tools
     .addNode('validate', createValidateNode())
     .addNode('forceTools', createForceToolNode(invokeLLM))
+    // edges
     .addEdge(START, 'analyzeInput')
-    .addEdge('analyzeInput', 'planTools')
-    .addEdge('planTools', 'generate')
-    .addEdge('generate', 'validate')
+    .addEdge('analyzeInput', 'routeByIntent')
+    .addConditionalEdges('routeByIntent', routeByIntentEdge, {
+      combat: 'combatPlan',
+      sanity: 'sanityPlan',
+      narrative: 'narrativePlan',
+      resource: 'resourcePlan',
+      generic: 'genericPlan',
+    })
+    .addEdge('genericPlan', 'genericGenerate')
+    .addEdge('combatPlan', 'combatGenerate')
+    .addEdge('sanityPlan', 'sanityGenerate')
+    .addEdge('narrativePlan', 'narrativeGenerate')
+    .addEdge('resourcePlan', 'resourceGenerate')
+    .addEdge('genericGenerate', 'validate')
+    .addEdge('combatGenerate', 'validate')
+    .addEdge('sanityGenerate', 'validate')
+    .addEdge('narrativeGenerate', 'validate')
+    .addEdge('resourceGenerate', 'validate')
     .addConditionalEdges('validate', routeAfterValidation, {
       end: END,
       forceTools: 'forceTools',
@@ -453,9 +703,13 @@ export function createKPGraph(invokeLLM) {
  * Run the KP Agent graph.
  * @returns {Promise<{content: string, toolCalls?: Array<{id, name, arguments}>}>}
  */
-export async function invokeKPAgent(messages, invokeLLM) {
+export async function invokeKPAgent(messages, invokeLLM, storyContext) {
   var graph = createKPGraph(invokeLLM)
-  var result = await graph.invoke({ messages: messages })
+  var initialState = { messages: messages }
+  if (storyContext !== undefined && storyContext !== null) {
+    initialState.storyContext = storyContext
+  }
+  var result = await graph.invoke(initialState)
   return {
     content: result.response || '',
     toolCalls: (result.toolCalls && result.toolCalls.length > 0) ? result.toolCalls : undefined,
