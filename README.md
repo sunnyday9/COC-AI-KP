@@ -241,8 +241,6 @@ npm run electron:build
 
 ## 开发路线图
 
-基于 [ai-trpg-web/docs/COC-KP-SPRINT-PLAN.md](ai-trpg-web/docs/COC-KP-SPRINT-PLAN.md) 与 GAP 分析。
-
 ### Sprint 1：治疗与 Max SAN ✅ 已完成
 
 **主题**：急救/医学、自然恢复、Max SAN 限制  
@@ -338,8 +336,3 @@ npm run test:e2e:electron
 | [TESTING.md](ai-trpg-web/docs/TESTING.md) | 测试分层、TDD 流程、用例规划 |
 | [CODE-REVIEW-2026-03-06.md](ai-trpg-web/docs/CODE-REVIEW-2026-03-06.md) | 代码审查与重构记录 |
 
----
-
-## 许可证
-
-本项目为私有项目，具体许可以仓库说明为准。
