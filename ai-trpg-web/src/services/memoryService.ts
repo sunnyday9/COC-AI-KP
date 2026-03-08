@@ -17,6 +17,10 @@ export interface SummarizePayload {
   currentSummary: string
   /** Optional: current story context (scene/SAN/clues). Kept short and authoritative. */
   storyContextText?: string
+  /** Optional: RAG context (story + GraphRAG) for memory grounding. */
+  ragContextText?: string
+  /** Optional: user graph summary (obtained clues, visited scenes). */
+  userGraphSummary?: string
 }
 
 /**
@@ -27,14 +31,20 @@ export async function summarizeLongTerm(
   aiConfig: AIProviderConfig,
   payload: SummarizePayload
 ): Promise<string> {
-  const { recentMessagesText, currentSummary, storyContextText } = payload
+  const { recentMessagesText, currentSummary, storyContextText, ragContextText, userGraphSummary } = payload
   const storyCtxBlock = storyContextText && storyContextText.trim()
     ? `【当前故事上下文】\n${storyContextText.trim()}\n\n`
     : ''
+  const ragBlock = ragContextText && ragContextText.trim()
+    ? `【剧本相关情报（RAG检索）】\n${ragContextText.trim().slice(0, 800)}${ragContextText.length > 800 ? '…' : ''}\n\n`
+    : ''
+  const userGraphBlock = userGraphSummary && userGraphSummary.trim()
+    ? `【调查员行动记录】\n${userGraphSummary.trim()}\n\n`
+    : ''
   const userContent =
     currentSummary.trim()
-      ? `${storyCtxBlock}【当前长期摘要】\n${currentSummary}\n\n【近期对话】\n${recentMessagesText}\n\n请将上述合并为一段新的长期摘要。`
-      : `${storyCtxBlock}【近期对话】\n${recentMessagesText}\n\n请将上述整理为一段长期摘要（场景、线索、重要NPC、关键事件）。`
+      ? `${storyCtxBlock}${ragBlock}${userGraphBlock}【当前长期摘要】\n${currentSummary}\n\n【近期对话】\n${recentMessagesText}\n\n请将上述合并为一段新的长期摘要。`
+      : `${storyCtxBlock}${ragBlock}${userGraphBlock}【近期对话】\n${recentMessagesText}\n\n请将上述整理为一段长期摘要（场景、线索、重要NPC、关键事件）。`
   try {
     const result = await chat(aiConfig, {
       messages: [

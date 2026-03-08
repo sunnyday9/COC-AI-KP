@@ -12,6 +12,10 @@ export interface RAGSettings {
   /** 'builtin' = preloaded local model (no API); 'api' = use AI Base URL + API Key + model */
   provider: RAGEmbeddingProvider
   model: string
+  /** Use local GraphRAG (Microsoft GraphRAG-style, COC-specialized) */
+  useGraphRAG?: boolean
+  /** Model for local GraphRAG extraction when MS GraphRAG unavailable */
+  extractionModel?: string
 }
 
 export interface AppSettings {
@@ -29,6 +33,8 @@ const defaultRAG: RAGSettings = {
   useEmbeddings: false,
   provider: 'builtin',
   model: 'text-embedding-3-small',
+  useGraphRAG: true,
+  extractionModel: '',
 }
 
 const defaultSettings: AppSettings = {
@@ -68,6 +74,8 @@ export const useSettingsStore = defineStore('settings', () => {
           useEmbeddings: rawRag.useEmbeddings === true,
           provider: rawRag.provider === 'api' ? 'api' : 'builtin',
           model: typeof rawRag.model === 'string' ? rawRag.model : defaultRAG.model,
+          useGraphRAG: rawRag.useGraphRAG === false ? false : true,
+          extractionModel: typeof rawRag.extractionModel === 'string' ? rawRag.extractionModel : '',
         }
         settings.value = { ai, rag, syncServerUrl }
       }

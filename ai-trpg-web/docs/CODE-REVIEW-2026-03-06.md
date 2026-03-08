@@ -256,3 +256,11 @@ Project: `ai-trpg-web` (COC7 AI KP, Electron + Vue 3 + LangGraph + RAG)
 
 整体而言，这轮调整在架构和类型安全上是正向的：它把“工具结果契约”和“游戏状态更新”都向更易测试、更易演进的形态推进；主要需要注意的是尽快统一所有 handler 的返回协议（始终返回字符串化的结构化结果，或集中在 orchestrator 处完成序列化），并为新引入的 Result 接口补上针对 JSON 负载的回归测试，这样既能锁住本次重构的收益，也能为接下来填充成长与环境规则打下稳定基础。
 
+---
+
+## 8. 2026-03-08 架构更新补充（Post-Review Addendum）
+
+- **本地 GraphRAG**：移除 Microsoft GraphRAG 桥接，项目采用本地 GraphRAG（`graphRag.mjs`、`graphStore.mjs`、`graphExtractLLM.mjs`、`prompts/cocExtractGraph.js` 等）。管道：向量检索 → 图扩展（2-hop）→ 结构化摘要（社区摘要、当前场景、相关节点、线索）。
+- **用户行动图谱（userGraphStore）**：`userData/session_graph/{storyId}_{sessionId}.json` 存储调查员获得的线索、到访场景、检定等；事件来源：`grant_clue`、`transition_scene`、`skill_check`、`san_check`、`melee_attack`、`ranged_attack`。IPC：`rag:userGraphAdd`、`rag:userGraphSync`、`rag:userGraphSummary`。
+- **记忆 + RAG 集成**：`SummarizePayload` 新增 `ragContextText`、`userGraphSummary`；`runLongTermSummarization` 在触发前调用 `getContext` 与 `getUserGraphSummary`，将 RAG 与用户图谱摘要一并注入长期摘要；`fetchRagContext` 每轮附加用户图谱摘要；`loadGame` 时调用 `syncUserGraphFromState`。
+

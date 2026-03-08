@@ -22,9 +22,12 @@ type ElectronRagAPI = {
   ragIndex: (params: { scriptId: string; chunks: { id: string; content: string; type: string; metadata: Record<string, unknown> }[]; storyMeta?: { name?: string } }) => Promise<{ ok: boolean; indexed: number }>
   ragDelete: (scriptId: string) => Promise<{ ok: boolean; deleted: number }>
   ragQuery: (params: { query: string; scriptId?: string; sceneId?: string; type?: string; topK?: number }) => Promise<{ chunks: RAGChunkResult[] }>
-  ragContext: (params: { query: string; scriptId?: string; sceneId?: string; topK?: number }) => Promise<{ context: string }>
+  ragContext: (params: { query: string; scriptId?: string; sceneId?: string; topK?: number }) => Promise<{ context: string; graphSummary?: string }>
   ragListStories: () => Promise<IndexedStory[]>
   ragStoryOverview: (params: { storyId: string; topK?: number }) => Promise<{ overview: string; storyName: string }>
+  ragUserGraphAdd?: (params: { storyId: string; sessionId: string; event: { type: string; name: string; description?: string } }) => Promise<void>
+  ragUserGraphSync?: (params: { storyId: string; sessionId: string; state: { cluesObtained: string[]; currentScene: string } }) => Promise<void>
+  ragUserGraphSummary?: (params: { storyId: string; sessionId: string }) => Promise<string>
 }
 
 function getApi(): ElectronRagAPI | null {
@@ -103,13 +106,13 @@ export async function queryChunks(params: {
   })
 }
 
-/** Get formatted context for LLM prompt */
+/** Get formatted context for LLM prompt. With GraphRAG, context includes relationship structure. */
 export async function getContext(params: {
   query: string
   scriptId?: string
   sceneId?: string
   topK?: number
-}): Promise<{ context: string }> {
+}): Promise<{ context: string; graphSummary?: string }> {
   const api = getApi()
   if (!api?.ragContext) return { context: '' }
   return api.ragContext({
@@ -118,4 +121,33 @@ export async function getContext(params: {
     sceneId: params.sceneId,
     topK: params.topK ?? 5,
   })
+}
+
+/** Add user graph event (clue obtained, scene visited, etc.). */
+export async function addUserGraphEvent(params: {
+  storyId: string
+  sessionId: string
+  event: { type: 'clue' | 'scene' | 'action' | 'item' | 'npc'; name: string; description?: string }
+}): Promise<void> {
+  const api = getApi()
+  if (!api?.ragUserGraphAdd) return
+  await api.ragUserGraphAdd(params)
+}
+
+/** Sync user graph from game state (on load). */
+export async function syncUserGraphFromState(params: {
+  storyId: string
+  sessionId: string
+  state: { cluesObtained: string[]; currentScene: string }
+}): Promise<void> {
+  const api = getApi()
+  if (!api?.ragUserGraphSync) return
+  await api.ragUserGraphSync(params)
+}
+
+/** Get user graph summary for memory/context. */
+export async function getUserGraphSummary(storyId: string, sessionId: string): Promise<string> {
+  const api = getApi()
+  if (!api?.ragUserGraphSummary) return ''
+  return api.ragUserGraphSummary({ storyId, sessionId })
 }

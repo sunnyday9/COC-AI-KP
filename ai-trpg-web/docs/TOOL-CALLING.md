@@ -18,6 +18,8 @@
 | **Resource** | resourceHandler | adjust_mp, spend_luck |
 | **Narrative** | narrativeHandler | transition_scene, grant_clue |
 
+**用户行动图谱（userGraphStore）**：`transition_scene`、`grant_clue` 会触发用户图谱事件（`addUserGraphEvent`）；`processToolCalls` 在 `skill_check`、`san_check`、`melee_attack`、`ranged_attack` 等工具执行时也会记录事件，供 RAG 上下文与长期记忆使用。
+
 分类与列表也可通过 `COC_TOOL_CATEGORIES`（`src/toolCalling/orchestrator.ts`）以代码形式获取。
 
 ## 调用链

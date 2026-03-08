@@ -1,6 +1,6 @@
 # COC7 AI KP Sprint 计划（基于 GAP 分析）
 
-> 基于 `COC-KP-GAP-ANALYSIS.md` 与当前实现/测试情况（见 `COC7_KP_WORKFLOW.md`、`TESTING.md`），规划后续若干 Sprint 的增量路线。假设每个 Sprint 为 2 周节奏，小团队 1–2 人持续投入。
+> 基于 `COC-KP-GAP-ANALYSIS.md` 与当前实现/测试情况（见 `COC7_KP_WORKFLOW.md`、`TESTING.md`），规划后续若干 Sprint 的增量路线。假设每个 Sprint 为 2 周节奏，小团队 1–2 人持续投入。当前 RAG 已包含向量检索、本地 GraphRAG（图扩展 + 社区摘要）与用户行动图谱，新功能可在此基础上扩展。
 
 ## 总体目标与范围
 

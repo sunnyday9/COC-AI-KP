@@ -47,4 +47,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
   ragContext: (params) => ipcRenderer.invoke('rag:context', params),
   ragListStories: () => ipcRenderer.invoke('rag:listStories'),
   ragStoryOverview: (params) => ipcRenderer.invoke('rag:storyOverview', params),
+  ragUserGraphAdd: (params) => ipcRenderer.invoke('rag:userGraphAdd', params),
+  ragUserGraphSync: (params) => ipcRenderer.invoke('rag:userGraphSync', params),
+  ragUserGraphSummary: (params) => ipcRenderer.invoke('rag:userGraphSummary', params),
 });

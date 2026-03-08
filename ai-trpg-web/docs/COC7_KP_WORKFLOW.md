@@ -26,8 +26,9 @@
 
 ### 2.2 RAG（故事检索）
 
-- **索引**：每个 chunk 会保存 `id / content / type / metadata`，并建立 TF-IDF（以及可选 dense embedding）向量。  
-- **检索**：游戏每回合把玩家输入当 query，检索 topK chunks，形成“故事情报”块注入 system prompt。  
+- **索引**：每个 chunk 会保存 `id / content / type / metadata`，并建立 TF-IDF（以及可选 dense embedding）向量；若启用 GraphRAG，`graphStore.indexGraph` 会从 chunks 抽取实体/关系、社区摘要，写入 `userData/rag_graph/*.json`。  
+- **检索**：游戏每回合把玩家输入当 query，通过 `rag:context` 调用 `graphRag.buildContextWithGraph`（向量检索 → 图扩展 2-hop → 结构化摘要）；若关闭 GraphRAG 则退化为纯向量检索。每轮会附加用户行动图谱摘要，作为故事情报块注入 system prompt。  
+- **用户行动图谱（userGraphStore）**：记录调查员获得的线索、到访场景、检定等，存储于 `userData/session_graph/{storyId}_{sessionId}.json`；事件来源：`grant_clue`、`transition_scene`、`skill_check`、`san_check`、`melee_attack`、`ranged_attack` 等。
 - **场景过滤**：检索接口支持 `sceneId` 过滤（当前实现会把当前场景传入 RAG，若 chunk 带场景元信息则可收窄结果；没有场景元信息时则相当于全局检索）。
 
 ### 2.3 KP（守密人）AI：LangGraph 工作流
@@ -50,7 +51,8 @@
 - **长期**：  
   - `longTermSummary`（会话摘要）在“场景切换/定期”触发更新；  
   - 摘要生成会引入当前 storyContext（方案 A）：用“权威状态”校正对话遗漏/歧义；  
-  - 支持保存/读档以跨会话恢复记忆与状态。
+  - **新增**：长期摘要时同时注入 `ragContextText`（RAG + GraphRAG 摘要）与 `userGraphSummary`（用户图谱摘要），由 `runLongTermSummarization` 在触发前调用 `getContext` 与 `getUserGraphSummary` 获取；
+  - 支持保存/读档以跨会话恢复记忆与状态；`loadGame` 时调用 `syncUserGraphFromState` 同步用户图谱。
 
 ### 2.6 存档（Save/Load）
 
@@ -83,7 +85,7 @@ flowchart LR
 要点：
 
 - PDF 在索引读取时会把“正文文本 + 内嵌图 OCR 文本”合并后再分块；
-- 分块后的 chunk 进入 RAG 索引（TF-IDF + 可选 dense embedding）。
+- 分块后的 chunk 进入 RAG 索引（TF-IDF + 可选 dense embedding）；若启用 GraphRAG，会额外抽取图谱并建立社区摘要。
 
 ### 3.2 游戏阶段：玩家输入 → RAG 检索 → LangGraph KP → 工具链 → 回复
 
@@ -182,6 +184,10 @@ flowchart LR
   - `readStory` / `readStoryForRag`（PDF OCR）
 - **RAG 向量检索（内置）**：`electron/rag/vectorStore.mjs`  
   - 索引、查询、上下文拼装、元信息规范化
+- **GraphRAG**：`electron/rag/graphRag.mjs`、`graphStore.mjs`、`graphExtractLLM.mjs`  
+  - 图扩展、社区摘要、结构化检索
+- **用户行动图谱**：`electron/rag/userGraphStore.mjs`  
+  - 线索/场景/检定等事件记录，`rag:userGraphAdd`、`rag:userGraphSync`、`rag:userGraphSummary`
 - **设置/AI 代理**：`electron/ipc/*Handlers.cjs`、`src/stores/settingsStore.ts`
 
 ---

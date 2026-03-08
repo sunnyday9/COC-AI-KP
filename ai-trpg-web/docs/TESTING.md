@@ -1,4 +1,4 @@
-# AI KP COC 测试与 TDD 说明
+﻿# AI KP COC 测试与 TDD 说明
 
 本项目的测试体系和 TDD 流程围绕《守秘人规则书 2002c》与《调查员手册 v1.21》的规则映射展开（见 [COC-KP-GAP-ANALYSIS.md](COC-KP-GAP-ANALYSIS.md) 与 [COC7_KP_WORKFLOW.md](COC7_KP_WORKFLOW.md)）。本文件说明测试分层、规则书映射、TDD 流程以及具体场景覆盖。
 
@@ -17,6 +17,8 @@
 | | `src/stores/__tests__/gameStoreMemory.spec.ts` | 记忆系统集成：场景切换触发摘要（含 storyContext）、存档/读档包含记忆字段 |
 | **Electron 单元/集成（Node 环境）** | `electron/rag/__tests__/vectorStore.spec.ts` | RAG 索引/持久化/检索（TF-IDF & dense embedding 路径、scene/type 过滤、`buildContext` 格式） |
 | | `electron/rag/__tests__/embedding.spec.ts` | 内置 embedding（Transformers.js pipeline）与用户 API embedding（`/v1/embeddings`） |
+| | `electron/rag/__tests__/graphExtractLLM.spec.ts` | GraphRAG 图谱抽取（COC 实体/关系、LLM 调用） |
+| | `electron/rag/__tests__/storyParsers.spec.ts` | 剧本解析 |
 | | `electron/agent/__tests__/kpGraph.spec.ts` | LangGraph KP 图：意图路由、缺失工具强制、文本模拟清理、storyContext 注入 |
 | | `electron/ipc/__tests__/pathSafety.spec.ts` | IPC 路径安全：saveId 校验、目录白名单、符号链接逃逸防护 |
 | | `electron/__tests__/logging.spec.ts` | 日志封装格式：`logInfo/logWarn/logError` 输出统一前缀与组件名 |
@@ -275,7 +277,8 @@ npm run test:run -- --coverage
 
 RAG 的核心检索逻辑在 Electron 侧（`electron/rag/vectorStore.mjs`），Vitest 当前默认只跑 `src/**`，因此本阶段主要做：
 
-- **前端调用链不回归**：保证 gameStore 每回合仍能把“故事情报”注入 system prompt；sceneId 会在存在时传给 RAG（前端层面）。
+- **前端调用链不回归**：保证 gameStore 每回合仍能把故事情报（含 GraphRAG 与用户图谱摘要）注入 system prompt；sceneId 会在存在时传给 RAG（前端层面）。
+- **用户图谱**：`processToolCalls` 在 `grant_clue`、`transition_scene`、`skill_check`、`san_check`、`melee_attack`、`ranged_attack` 等工具调用时触发 `addUserGraphEvent`；`loadGame` 时调用 `syncUserGraphFromState`。当前无独立 userGraphStore 单测，集成在 gameStore 流程中。
 - **PDF OCR 索引能力**：涉及 Electron + pdf-lib + tesseract.js，建议先以人工回归为主（见下）。
 
 #### 建议的人工回归用例（PDF OCR + 索引）

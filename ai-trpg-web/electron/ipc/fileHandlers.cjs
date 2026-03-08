@@ -1,6 +1,7 @@
 const { ipcMain, app, dialog } = require('electron')
 const fs = require('fs').promises
 const path = require('path')
+const { pathToFileURL } = require('url')
 const pdfParse = require('pdf-parse')
 const { assertRealPathInDir, assertParentRealPathInDir } = require('./pathSafety.cjs')
 
@@ -99,18 +100,19 @@ function registerFileHandlers() {
     }
   })
 
+  const STORY_EXTENSIONS = ['.txt', '.md', '.json', '.pdf', '.docx', '.epub', '.html', '.htm']
+  function isStoryFile(name) {
+    const lower = name.toLowerCase()
+    return STORY_EXTENSIONS.some((ext) => lower.endsWith(ext))
+  }
+
   // Stories handlers
   ipcMain.handle('file:listStories', async () => {
     const dir = await ensureStoriesDir()
     try {
       const entries = await fs.readdir(dir, { withFileTypes: true })
       const files = entries
-        .filter((e) => e.isFile() && (
-          e.name.endsWith('.txt') ||
-          e.name.endsWith('.md') ||
-          e.name.endsWith('.json') ||
-          e.name.toLowerCase().endsWith('.pdf')
-        ))
+        .filter((e) => e.isFile() && isStoryFile(e.name))
         .map((e) => ({ name: e.name, path: path.join(dir, e.name) }))
       return files
     } catch {
@@ -123,15 +125,30 @@ function registerFileHandlers() {
     const safePath = await assertRealPathInDir(dir, filePath, 'story path')
     const ext = path.extname(safePath).toLowerCase()
     if (ext === '.pdf') {
-      // PDF 文件：解析为文本
       const dataBuffer = await fs.readFile(safePath)
       const pdfData = await pdfParse(dataBuffer)
       return pdfData.text
-    } else {
-      // 文本文件：直接读取
-      const content = await fs.readFile(safePath, 'utf-8')
-      return content
     }
+    if (['.docx', '.epub'].includes(ext)) {
+      try {
+        const { parseByExtension } = await import(pathToFileURL(path.join(__dirname, '..', 'rag', 'storyParsers.mjs')).href)
+        const dataBuffer = await fs.readFile(safePath)
+        return await parseByExtension(ext, dataBuffer)
+      } catch {
+        return ''
+      }
+    }
+    if (['.html', '.htm'].includes(ext)) {
+      try {
+        const { parseByExtension } = await import(pathToFileURL(path.join(__dirname, '..', 'rag', 'storyParsers.mjs')).href)
+        const content = await fs.readFile(safePath, 'utf-8')
+        return await parseByExtension(ext, content)
+      } catch {
+        return ''
+      }
+    }
+    const content = await fs.readFile(safePath, 'utf-8')
+    return content
   })
 
   // 专用于 RAG 索引：正文由 pdf-parse 提取；仅对 PDF 内嵌图片做 OCR，避免与正文重复
@@ -139,6 +156,24 @@ function registerFileHandlers() {
     const dir = getStoriesPath()
     const safePath = await assertRealPathInDir(dir, filePath, 'story path')
     const ext = path.extname(safePath).toLowerCase()
+    if (['.docx', '.epub'].includes(ext)) {
+      try {
+        const { parseByExtension } = await import(pathToFileURL(path.join(__dirname, '..', 'rag', 'storyParsers.mjs')).href)
+        const dataBuffer = await fs.readFile(safePath)
+        return (await parseByExtension(ext, dataBuffer)) || ''
+      } catch {
+        return ''
+      }
+    }
+    if (['.html', '.htm'].includes(ext)) {
+      try {
+        const { parseByExtension } = await import(pathToFileURL(path.join(__dirname, '..', 'rag', 'storyParsers.mjs')).href)
+        const content = await fs.readFile(safePath, 'utf-8')
+        return (await parseByExtension(ext, content)) || ''
+      } catch {
+        return ''
+      }
+    }
     if (ext !== '.pdf') {
       const content = await fs.readFile(safePath, 'utf-8')
       return content
@@ -210,8 +245,9 @@ function registerFileHandlers() {
       properties: ['openFile'],
       filters: [
         { name: 'PDF 文件', extensions: ['pdf'] },
-        { name: '文本文件', extensions: ['txt', 'md'] },
-        { name: 'JSON', extensions: ['json'] },
+        { name: 'Word 文档', extensions: ['docx'] },
+        { name: 'EPUB 电子书', extensions: ['epub'] },
+        { name: '文本/网页', extensions: ['txt', 'md', 'json', 'html', 'htm'] },
         { name: '所有文件', extensions: ['*'] },
       ],
     })
@@ -222,12 +258,11 @@ function registerFileHandlers() {
     const destPath = path.join(dir, filename)
     try {
       const ext = path.extname(srcPath).toLowerCase()
-      if (ext === '.pdf') {
-        // PDF 文件：直接复制（不解析，解析在读取时进行）
+      const binaryExts = ['.pdf', '.docx', '.epub']
+      if (binaryExts.includes(ext)) {
         const dataBuffer = await fs.readFile(srcPath)
         await fs.writeFile(destPath, dataBuffer)
       } else {
-        // 文本文件：按文本读取和写入
         const content = await fs.readFile(srcPath, 'utf-8')
         await fs.writeFile(destPath, content, 'utf-8')
       }

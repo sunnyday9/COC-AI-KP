@@ -80,14 +80,24 @@ AI-COC-KP/
     │   ├── agent/                   # LangGraph KP 图
     │   │   ├── kpGraph.mjs          # 意图分类、Plan/Generate、validate、forceTools
     │   │   └── __tests__/
-    │   ├── rag/                     # RAG 向量检索
+    │   ├── rag/                     # RAG 向量检索 + GraphRAG
     │   │   ├── vectorStore.mjs      # TF-IDF、dense embedding、索引/查询
     │   │   ├── embedding.mjs        # 内置/API embedding
+    │   │   ├── graphStore.mjs       # 剧本知识图谱（实体/关系、社区摘要）
+    │   │   ├── graphRag.mjs         # GraphRAG 检索管道（向量→图扩展→结构化摘要）
+    │   │   ├── graphExtractLLM.mjs  # LLM 图谱抽取（COC 实体/关系）
+    │   │   ├── userGraphStore.mjs   # 用户行动图谱（线索/场景/检定等）
+    │   │   ├── storyParsers.mjs     # 剧本解析
+    │   │   ├── prompts/             # COC GraphRAG 提示词
+    │   │   │   ├── cocExtractGraph.js
+    │   │   │   ├── cocCommunityReport.js
+    │   │   │   ├── cocLocalSearch.js
+    │   │   │   └── cocGlobalSearch.js
     │   │   └── __tests__/
     │   ├── ipc/                     # IPC handler
     │   │   ├── aiHandlers.cjs       # AI 调用、COC_KP_TOOLS 定义
     │   │   ├── kpAgentHandlers.cjs  # kp:invoke / kp:invokeStream（LangGraph）
-    │   │   ├── ragHandlers.cjs      # rag:index / query / context / health
+    │   │   ├── ragHandlers.cjs      # rag:index / query / context / health / userGraph*
     │   │   ├── fileHandlers.cjs     # 故事/剧本读写、PDF OCR
     │   │   ├── saveHandlers.cjs     # 存档读写
     │   │   ├── settingsHandlers.cjs
@@ -119,9 +129,9 @@ AI-COC-KP/
 ## 功能概览
 
 - **AI 守秘人**：LangGraph 多 Agent 工作流（意图分类 → 工具规划 → 生成 → 验证），强制通过工具调用执行投骰/HP/SAN 变更，防止叙事中伪造骰点
-- **RAG 剧本检索**：支持 PDF / Markdown / TXT 导入，TF-IDF + 可选 dense embedding，PDF 内嵌图 OCR 纳入索引
+- **RAG 剧本检索**：支持 PDF / Markdown / TXT 导入，TF-IDF + 可选 dense embedding，PDF 内嵌图 OCR 纳入索引；**本地 GraphRAG**（Microsoft GraphRAG 风格、COC 定制）：向量检索 → 图扩展（2-hop）→ 结构化摘要（社区摘要、当前场景、相关节点、线索）；**用户行动图谱**（userGraphStore）：记录调查员获得的线索、到访场景、检定等，与 RAG 上下文一并注入
 - **COC 7th 规则**：技能检定、对抗检定、近战/远程攻击、重伤/濒死/即死、SAN 检定与疯狂判定、急救/医学、自然恢复、Max SAN 限制等
-- **记忆与存档**：短期/长期记忆、场景切换触发摘要、完整存档/读档
+- **记忆与存档**：短期/长期记忆、场景切换触发摘要、完整存档/读档；长期摘要融合 RAG 上下文与用户图谱摘要，提升跨会话记忆质量
 - **多 LLM 支持**：OpenAI / Anthropic / Google / DeepSeek 等兼容 API
 
 ---
@@ -199,7 +209,7 @@ flowchart TB
 | 前端 | Vue 3, Pinia, Vue Router, TypeScript, Vite, Tailwind CSS |
 | 桌面 | Electron |
 | AI | LangChain / LangGraph, OpenAI SDK |
-| RAG | 内置 TF-IDF + Xenova/Transformers 本地 embedding 或可选 API embedding |
+| RAG | 内置 TF-IDF + 可选 dense embedding；本地 GraphRAG（图扩展 + 社区摘要）；用户行动图谱 |
 | 测试 | Vitest, Playwright |
 
 ---
@@ -334,5 +344,6 @@ npm run test:e2e:electron
 | [COC-KP-SPRINT-PLAN.md](ai-trpg-web/docs/COC-KP-SPRINT-PLAN.md) | Sprint 计划与任务分解 |
 | [COC-KP-GAP-ANALYSIS.md](ai-trpg-web/docs/COC-KP-GAP-ANALYSIS.md) | 规则书与实现差距分析 |
 | [TESTING.md](ai-trpg-web/docs/TESTING.md) | 测试分层、TDD 流程、用例规划 |
+| [TOOL-CALLING.md](ai-trpg-web/docs/TOOL-CALLING.md) | 工具编排、Handler 分类、用户图谱事件 |
 | [CODE-REVIEW-2026-03-06.md](ai-trpg-web/docs/CODE-REVIEW-2026-03-06.md) | 代码审查与重构记录 |
 

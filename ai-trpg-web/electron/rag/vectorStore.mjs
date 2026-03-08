@@ -367,8 +367,10 @@ export async function queryChunks(params) {
       score = cosineSimilarity(queryTfidf, doc.tfidf)
     }
     return {
+      id: doc.id,
       content: doc.content,
       metadata: doc.metadata,
+      type: doc.type,
       distance: 1 - score,
     }
   })
@@ -406,6 +408,25 @@ export async function buildContext(params) {
     lines.push('')
   }
   return { context: lines.join('\n') }
+}
+
+/**
+ * Get chunk content by ids (for graph expansion).
+ */
+export function getChunksByIds(scriptId, chunkIds) {
+  var idx = getOrLoadIndex(scriptId)
+  if (!idx || !chunkIds?.length) return []
+  var idSet = new Set(chunkIds)
+  return idx.docs
+    .filter(function (d) { return idSet.has(d.id) })
+    .map(function (d) {
+      return {
+        id: d.id,
+        content: d.content,
+        type: d.type,
+        metadata: d.metadata || {},
+      }
+    })
 }
 
 /**

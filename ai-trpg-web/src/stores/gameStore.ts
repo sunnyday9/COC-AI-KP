@@ -3,7 +3,7 @@ import { ref } from 'vue'
 import type { Message } from '../types/game'
 import type { GamePhase, COCCharacterSheet } from '../types/character'
 import type { StoryContext } from '../types/storyContext'
-import { getContext } from '../services/ragService'
+import { getContext, addUserGraphEvent, syncUserGraphFromState, getUserGraphSummary } from '../services/ragService'
 import {
   hasKpAgent,
   runKpAgentLoop as runKpAgentLoopService,
@@ -161,10 +161,24 @@ export const useGameStore = defineStore('game', () => {
 
   function addClue(description: string) {
     if (!cluesObtained.value.includes(description)) cluesObtained.value.push(description)
+    if (storyId.value && sessionId.value) {
+      addUserGraphEvent({
+        storyId: storyId.value,
+        sessionId: sessionId.value,
+        event: { type: 'clue', name: description },
+      }).catch(() => {})
+    }
   }
 
   function transitionToScene(sceneName: string) {
     currentScene.value = sceneName
+    if (storyId.value && sessionId.value) {
+      addUserGraphEvent({
+        storyId: storyId.value,
+        sessionId: sessionId.value,
+        event: { type: 'scene', name: sceneName },
+      }).catch(() => {})
+    }
     runLongTermSummarization()
   }
 
@@ -191,7 +205,23 @@ export const useGameStore = defineStore('game', () => {
           cluesObtained.value.length ? `已获得线索: ${cluesObtained.value.slice(0, 12).join('；')}` : '',
         ].filter(Boolean).join('\n')
       : ''
-    summarizeLongTerm(aiConfig, { recentMessagesText: recentText, currentSummary: current, storyContextText })
+    const sid = storyId.value
+    const sessId = sessionId.value
+    const ragQuery = [currentScene.value, ...cluesObtained.value.slice(0, 5)].filter(Boolean).join(' ') || '当前场景 已获线索 调查进展'
+    Promise.all([
+      sid ? getContext({ query: ragQuery, scriptId: sid, sceneId: currentScene.value || undefined, topK: 5 }) : Promise.resolve({ context: '' }),
+      sid && sessId ? getUserGraphSummary(sid, sessId) : Promise.resolve(''),
+    ])
+      .then(([ctxRes, userGraphSummary]) => {
+        const ragContextText = ctxRes?.context || ''
+        return summarizeLongTerm(aiConfig, {
+          recentMessagesText: recentText,
+          currentSummary: current,
+          storyContextText,
+          ragContextText,
+          userGraphSummary: userGraphSummary || '',
+        })
+      })
       .then((next) => {
         if (next) longTermSummary.value = next
       })
@@ -292,6 +322,32 @@ export const useGameStore = defineStore('game', () => {
   type ToolCall = { id: string; name: string; arguments: string }
 
   function processToolCalls(toolCalls: ToolCall[]): { toolResults: { role: 'tool'; tool_call_id: string; content: string }[]; displayMessages: Message[] } {
+    if (storyId.value && sessionId.value) {
+      for (const tc of toolCalls) {
+        try {
+          const args = tc.arguments ? (JSON.parse(tc.arguments) as Record<string, unknown>) : {}
+          if (tc.name === 'skill_check') {
+            addUserGraphEvent({
+              storyId: storyId.value,
+              sessionId: sessionId.value,
+              event: { type: 'action', name: `技能检定: ${String(args.skillName ?? '未知')}`, description: String(args.result ?? '') },
+            }).catch(() => {})
+          } else if (tc.name === 'san_check') {
+            addUserGraphEvent({
+              storyId: storyId.value,
+              sessionId: sessionId.value,
+              event: { type: 'action', name: 'SAN检定', description: String(args.sanLost ?? '') },
+            }).catch(() => {})
+          } else if (tc.name === 'melee_attack' || tc.name === 'ranged_attack') {
+            addUserGraphEvent({
+              storyId: storyId.value,
+              sessionId: sessionId.value,
+              event: { type: 'action', name: tc.name === 'melee_attack' ? '近战攻击' : '远程攻击', description: '' },
+            }).catch(() => {})
+          }
+        } catch { /* ignore parse errors */ }
+      }
+    }
     const ctx = buildToolContext({
       characterSheet: characterSheet.value,
       updateCharacterHP,
@@ -334,13 +390,20 @@ export const useGameStore = defineStore('game', () => {
   async function fetchRagContext(query: string): Promise<string> {
     if (!storyId.value) return ''
     try {
-      const ctxRes = await getContext({
-        query,
-        scriptId: storyId.value,
-        sceneId: currentScene.value?.trim() || undefined,
-        topK: 8,
-      })
-      return ctxRes.context
+      const [ctxRes, userSummary] = await Promise.all([
+        getContext({
+          query,
+          scriptId: storyId.value,
+          sceneId: currentScene.value?.trim() || undefined,
+          topK: 8,
+        }),
+        sessionId.value ? getUserGraphSummary(storyId.value, sessionId.value) : Promise.resolve(''),
+      ])
+      let ctx = ctxRes?.context || ''
+      if (userSummary?.trim()) {
+        ctx += (ctx ? '\n\n' : '') + '## 调查员行动记录\n' + userSummary.trim()
+      }
+      return ctx
     } catch { return '' }
   }
 
@@ -392,6 +455,13 @@ export const useGameStore = defineStore('game', () => {
     if (typeof data.selectedOccupationName === 'string') selectedOccupationName.value = data.selectedOccupationName
     if (typeof data.sessionId === 'string') sessionId.value = data.sessionId
     isInGame.value = true
+    if (storyId.value && sessionId.value) {
+      syncUserGraphFromState({
+        storyId: storyId.value,
+        sessionId: sessionId.value,
+        state: { cluesObtained: cluesObtained.value, currentScene: currentScene.value },
+      }).catch(() => {})
+    }
   }
 
   async function listSaves(): Promise<string[]> {

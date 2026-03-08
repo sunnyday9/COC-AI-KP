@@ -2,6 +2,7 @@ const { ipcMain } = require('electron')
 const path = require('path')
 const { pathToFileURL } = require('url')
 const { readSettings } = require('./settingsHandlers.cjs')
+const { invokeChat } = require('./aiHandlers.cjs')
 
 let ragModulePromise = null
 let embeddingModulePromise = null
@@ -67,7 +68,17 @@ function registerRAGHandlers() {
     const rag = await getRagModule()
     const getEmbedding = await buildGetEmbedding()
     const options = getEmbedding ? { getEmbedding } : {}
-    return rag.indexChunks(scriptId, chunks, storyMeta, options)
+    const vectorResult = await rag.indexChunks(scriptId, chunks, storyMeta, options)
+    const settings = await readSettings()
+    const ragSettings = settings?.rag || {}
+    if (ragSettings.useGraphRAG !== false && typeof invokeChat === 'function') {
+      const graphModule = await import(pathToFileURL(path.join(__dirname, '..', 'rag', 'graphStore.mjs')).href)
+      await graphModule.indexGraph(scriptId, chunks, storyMeta, {
+        invokeChat,
+        extractionModel: ragSettings.extractionModel || settings?.ai?.model || undefined,
+      })
+    }
+    return vectorResult
   })
 
   ipcMain.handle('rag:listStories', async () => {
@@ -85,7 +96,12 @@ function registerRAGHandlers() {
   ipcMain.handle('rag:delete', async (_, scriptId) => {
     if (!scriptId) return { ok: false, deleted: 0 }
     const rag = await getRagModule()
-    return rag.deleteChunks(scriptId)
+    const vectorResult = rag.deleteChunks(scriptId)
+    try {
+      const graphModule = await import(pathToFileURL(path.join(__dirname, '..', 'rag', 'graphStore.mjs')).href)
+      graphModule.deleteGraph(scriptId)
+    } catch {}
+    return vectorResult
   })
 
   ipcMain.handle('rag:query', async (_, params) => {
@@ -104,15 +120,37 @@ function registerRAGHandlers() {
 
   ipcMain.handle('rag:context', async (_, params) => {
     const { query, scriptId, sceneId, topK } = params || {}
-    const rag = await getRagModule()
+    const settings = await readSettings()
+    const useGraphRAG = settings?.rag?.useGraphRAG !== false
+    const graphRag = await import(pathToFileURL(path.join(__dirname, '..', 'rag', 'graphRag.mjs')).href)
     const getEmbedding = await buildGetEmbedding()
-    return rag.buildContext({
+    return graphRag.buildContextWithGraph({
       query,
       scriptId,
       sceneId,
       topK: topK ?? 5,
       getEmbedding: getEmbedding || undefined,
+      useGraphRAG,
     })
+  })
+
+  ipcMain.handle('rag:userGraphAdd', async (_, params) => {
+    const { storyId, sessionId, event } = params || {}
+    if (!storyId || !sessionId || !event) return
+    const userGraph = await import(pathToFileURL(path.join(__dirname, '..', 'rag', 'userGraphStore.mjs')).href)
+    userGraph.addEvent(storyId, sessionId, event)
+  })
+  ipcMain.handle('rag:userGraphSync', async (_, params) => {
+    const { storyId, sessionId, state } = params || {}
+    if (!storyId || !sessionId) return
+    const userGraph = await import(pathToFileURL(path.join(__dirname, '..', 'rag', 'userGraphStore.mjs')).href)
+    userGraph.syncFromState(storyId, sessionId, state)
+  })
+  ipcMain.handle('rag:userGraphSummary', async (_, params) => {
+    const { storyId, sessionId } = params || {}
+    if (!storyId || !sessionId) return ''
+    const userGraph = await import(pathToFileURL(path.join(__dirname, '..', 'rag', 'userGraphStore.mjs')).href)
+    return userGraph.getSummary(storyId, sessionId)
   })
 }
 
