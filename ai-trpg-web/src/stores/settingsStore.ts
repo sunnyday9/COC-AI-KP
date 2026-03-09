@@ -30,7 +30,8 @@ const ALL_PROVIDER_IDS = new Set<string>([
 ])
 
 const defaultRAG: RAGSettings = {
-  useEmbeddings: false,
+  // 默认启用语义检索（嵌入向量），在 Electron 内自动使用本地向量检索 + GraphRAG
+  useEmbeddings: true,
   provider: 'builtin',
   model: 'text-embedding-3-small',
   useGraphRAG: true,
@@ -69,9 +70,10 @@ export const useSettingsStore = defineStore('settings', () => {
           maxTokens: typeof rawAi.maxTokens === 'number' ? rawAi.maxTokens : defaultSettings.ai.maxTokens,
         }
         const syncServerUrl = typeof saved.syncServerUrl === 'string' ? saved.syncServerUrl : defaultSettings.syncServerUrl
-        const rawRag = saved.rag && typeof saved.rag === 'object' ? saved.rag as Record<string, unknown> : {}
+        const rawRag = saved.rag && typeof saved.rag === 'object' ? (saved.rag as Record<string, unknown>) : {}
         const rag: RAGSettings = {
-          useEmbeddings: rawRag.useEmbeddings === true,
+          // 若未显式保存 useEmbeddings，则使用默认值（true）；只有明确写入 false 才关闭
+          useEmbeddings: typeof rawRag.useEmbeddings === 'boolean' ? Boolean(rawRag.useEmbeddings) : defaultRAG.useEmbeddings,
           provider: rawRag.provider === 'api' ? 'api' : 'builtin',
           model: typeof rawRag.model === 'string' ? rawRag.model : defaultRAG.model,
           useGraphRAG: rawRag.useGraphRAG === false ? false : true,

@@ -319,19 +319,24 @@ export async function queryChunks(params) {
   var topK = params.topK || 5
   var getEmbedding = params.getEmbedding
 
+  // 始终使用嵌入向量检索；若未提供 embedding，则不返回结果（不再回退到 TF-IDF）
+  if (!getEmbedding || typeof getEmbedding !== 'function') {
+    return { chunks: [] }
+  }
+
   if (!scriptId) return { chunks: [] }
   var idx = getOrLoadIndex(scriptId)
   if (!idx || !idx.docs.length) return { chunks: [] }
 
-  var queryTf = tokenize(query || '')
-  var queryTfidf = tfidfVector(queryTf, idx.idf)
   var queryVector = null
-  if (getEmbedding && typeof getEmbedding === 'function') {
-    try {
-      queryVector = await getEmbedding(query || '')
-    } catch (_e) {
-      queryVector = null
-    }
+  try {
+    queryVector = await getEmbedding(query || '')
+  } catch (_e) {
+    queryVector = null
+  }
+
+  if (!queryVector || !Array.isArray(queryVector) || queryVector.length === 0) {
+    return { chunks: [] }
   }
 
   // Candidate selection policy (anti-spoiler):
@@ -360,11 +365,9 @@ export async function queryChunks(params) {
   if (!candidates || candidates.length === 0) return { chunks: [] }
 
   var scored = candidates.map(function (doc) {
-    var score
-    if (queryVector && Array.isArray(doc.vector) && doc.vector.length === queryVector.length) {
+    var score = 0
+    if (Array.isArray(doc.vector) && doc.vector.length === queryVector.length) {
       score = cosineSimilarityArray(queryVector, doc.vector)
-    } else {
-      score = cosineSimilarity(queryTfidf, doc.tfidf)
     }
     return {
       id: doc.id,

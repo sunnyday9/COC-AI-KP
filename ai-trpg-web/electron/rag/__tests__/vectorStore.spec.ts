@@ -30,9 +30,15 @@ describe('electron/rag/vectorStore', () => {
     vi.unmock('electron')
   })
 
-  it('indexes, queries, and persists chunks (TF-IDF fallback)', async () => {
+  it('indexes, queries, and persists chunks with embeddings', async () => {
     const rag = await import('../vectorStore.mjs')
     const storyId = '故事A'
+    const embed = async (t: string) => {
+      const text = String(t)
+      if (text.includes('图书馆') || text.includes('霉味')) return [1, 0]
+      if (text.includes('医院') || text.includes('走廊')) return [0, 1]
+      return [1, 1]
+    }
     await rag.indexChunks(
       storyId,
       [
@@ -40,20 +46,20 @@ describe('electron/rag/vectorStore', () => {
         { id: 'c2', content: '医院里灯光惨白，走廊尽头传来低语。', type: 'scene', metadata: { sceneId: '医院', type: 'scene' } },
       ],
       { name: '测试故事' },
-      {}
+      { getEmbedding: embed }
     )
 
-    const r1 = await rag.queryChunks({ query: '图书馆', scriptId: storyId, topK: 1 })
+    const r1 = await rag.queryChunks({ query: '图书馆', scriptId: storyId, topK: 1, getEmbedding: embed })
     expect(r1.chunks.length).toBe(1)
     expect(r1.chunks[0]!.content).toContain('图书馆')
 
     // scene filter should narrow candidates when scene_id exists
-    const r2 = await rag.queryChunks({ query: '走廊', scriptId: storyId, sceneId: '医院', topK: 1 })
+    const r2 = await rag.queryChunks({ query: '走廊', scriptId: storyId, sceneId: '医院', topK: 1, getEmbedding: embed })
     expect(r2.chunks.length).toBe(1)
     expect(r2.chunks[0]!.content).toContain('医院')
 
     // anti-spoiler: if scene has no matches, do NOT fall back to other scenes
-    const r3 = await rag.queryChunks({ query: '霉味', scriptId: storyId, sceneId: '不存在的场景', topK: 2 })
+    const r3 = await rag.queryChunks({ query: '霉味', scriptId: storyId, sceneId: '不存在的场景', topK: 2, getEmbedding: embed })
     expect(r3.chunks.length).toBe(0)
 
     // persisted index file exists
@@ -82,8 +88,14 @@ describe('electron/rag/vectorStore', () => {
   it('buildContext formats output with headings', async () => {
     const rag = await import('../vectorStore.mjs')
     const storyId = 'X'
-    await rag.indexChunks(storyId, [{ id: 'c', content: '线索：钥匙在花瓶里。', type: 'clue', metadata: { type: 'clue' } }], {}, {})
-    const ctx = await rag.buildContext({ query: '钥匙', scriptId: storyId, topK: 1 })
+    const embed = async () => [1, 0, 0]
+    await rag.indexChunks(
+      storyId,
+      [{ id: 'c', content: '线索：钥匙在花瓶里。', type: 'clue', metadata: { type: 'clue' } }],
+      {},
+      { getEmbedding: embed }
+    )
+    const ctx = await rag.buildContext({ query: '钥匙', scriptId: storyId, topK: 1, getEmbedding: embed })
     expect(ctx.context).toContain('## 剧本相关情报')
     expect(ctx.context).toContain('### [1]')
   })

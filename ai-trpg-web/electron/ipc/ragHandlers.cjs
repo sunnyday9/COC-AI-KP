@@ -23,10 +23,9 @@ async function getEmbeddingModule() {
   return embeddingModulePromise
 }
 
-/** Build getEmbedding from settings when rag.useEmbeddings is true. Uses built-in model by default; user API when rag.provider === 'api'. */
+/** Build getEmbedding from settings. Always returns an embedding function when可能, 优先使用用户 API，其次回退到内置模型。 */
 async function buildGetEmbedding() {
   const settings = await readSettings()
-  if (!settings?.rag?.useEmbeddings) return null
   const rag = settings.rag || {}
   const provider = rag.provider === 'api' ? 'api' : 'builtin'
   const embed = await getEmbeddingModule()
@@ -35,12 +34,15 @@ async function buildGetEmbedding() {
     const ai = settings?.ai || {}
     const baseUrl = (ai.baseUrl || '').trim()
     const apiKey = ai.apiKey && ai.apiKey !== '***' ? ai.apiKey : null
-    if (!baseUrl || !apiKey) return null
-    return embed.createEmbedder({
-      baseUrl,
-      apiKey,
-      model: rag.model || 'text-embedding-3-small',
-    })
+    if (baseUrl && apiKey) {
+      const apiEmbedder = embed.createEmbedder({
+        baseUrl,
+        apiKey,
+        model: rag.model || 'text-embedding-3-small',
+      })
+      if (apiEmbedder) return apiEmbedder
+    }
+    // 如果 API 配置不完整或失败，则回退到内置模型
   }
 
   return await embed.createBuiltinEmbedder()

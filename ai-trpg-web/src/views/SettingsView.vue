@@ -316,13 +316,10 @@ async function handleTest() {
             <span class="text-xs text-cthulhu-200">RAG 向量检索已内置于 Electron，无需单独启动服务</span>
           </div>
           <div v-if="settings.rag" class="space-y-3">
-            <label class="flex items-center gap-2 cursor-pointer">
-              <input v-model="settings.rag.useEmbeddings" type="checkbox"
-                     class="rounded border-gray-600 bg-gray-800 text-eldritch-500 focus:ring-eldritch-500" />
-              <span class="text-xs font-medium text-gray-400">使用语义检索（嵌入向量）</span>
-            </label>
-            <p class="text-[11px] text-gray-600">关闭则仅用 TF-IDF。开启后可选：内置模型（无需 API）或使用自己的嵌入 API。</p>
-            <div v-if="settings.rag.useEmbeddings" class="space-y-3 pl-1 border-l-2 border-gray-700/60">
+            <p class="text-[11px] text-gray-600">
+              RAG 向量检索始终使用嵌入向量（内置模型或你的嵌入 API），不再使用 TF-IDF。
+            </p>
+            <div class="space-y-3 pl-1 border-l-2 border-gray-700/60">
               <div class="flex flex-col gap-2">
                 <label class="flex items-center gap-2 cursor-pointer">
                   <input v-model="settings.rag.provider" type="radio" value="builtin"
