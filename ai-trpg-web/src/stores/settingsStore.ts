@@ -22,6 +22,7 @@ export interface AppSettings {
   ai: AIProviderConfig
   rag?: RAGSettings
   syncServerUrl: string
+  debugMode?: boolean
 }
 
 const ALL_PROVIDER_IDS = new Set<string>([
@@ -79,7 +80,8 @@ export const useSettingsStore = defineStore('settings', () => {
           useGraphRAG: rawRag.useGraphRAG === false ? false : true,
           extractionModel: typeof rawRag.extractionModel === 'string' ? rawRag.extractionModel : '',
         }
-        settings.value = { ai, rag, syncServerUrl }
+        const debugMode = typeof saved.debugMode === 'boolean' ? saved.debugMode : false
+        settings.value = { ai, rag, syncServerUrl, debugMode }
       }
     }
   }
@@ -92,10 +94,12 @@ export const useSettingsStore = defineStore('settings', () => {
   }
 
   const aiConfig = computed(() => settings.value.ai)
+  const debugMode = computed(() => settings.value.debugMode ?? false)
 
   return {
     settings,
     aiConfig,
+    debugMode,
     load,
     save,
   }

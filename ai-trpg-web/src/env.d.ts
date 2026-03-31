@@ -94,6 +94,22 @@ interface ElectronAPI {
   ragContext: (params: RAGContextParams) => Promise<{ context: string }>
   ragListStories: () => Promise<IndexedStory[]>
   ragStoryOverview: (params: { storyId: string; topK?: number }) => Promise<{ overview: string; storyName: string }>
+  ragGetIndex: (params: { scriptId: string }) => Promise<{
+    scriptId: string
+    storyName: string
+    chunkCount: number
+    chunks: { id: string; content: string; type: string; metadata: Record<string, unknown>; hasVector: boolean }[]
+  }>
+  ragGetGraph: (params: { scriptId: string }) => Promise<{
+    scriptId: string
+    storyName: string
+    indexedAt: number
+    nodeCount: number
+    edgeCount: number
+    nodes: { id: string; type: string; name: string; content: string; communityId: string | null; chunkIds: string[] }[]
+    edges: { source: string; target: string; type: string; label: string }[]
+    communitySummaries: Record<string, string>
+  } | null>
 }
 
 declare global {

@@ -5,6 +5,7 @@
 import { chat, isStreamResponse } from './ai'
 import type { AIProviderConfig } from './ai'
 import type { StoryContext } from '../types/storyContext'
+import { traceBus } from './tracing'
 
 export type ToolCall = { id: string; name: string; arguments: string }
 
@@ -59,6 +60,10 @@ export async function kpInvokeOnce(
         if (payload.type === 'chunk' && payload.chunk) {
           streamed += payload.chunk
           onDelta?.(payload.chunk)
+        } else if (payload.type === 'trace' && payload.traceEvents) {
+          for (const te of payload.traceEvents as { span: string; type: string; data: Record<string, unknown> }[]) {
+            traceBus.emitRaw(te.span, te.type, te.data)
+          }
         } else if (payload.type === 'end') {
           off()
           resolve({ content: payload.content ?? streamed, toolCalls: payload.toolCalls })
@@ -85,9 +90,15 @@ export async function runKpAgentLoop(
   let msgs: unknown[] = chatMessages
 
   for (let loop = 0; loop < MAX_TOOL_ITERATIONS; loop++) {
+    traceBus.emit('kp_agent', 'kp_agent_loop_iteration', {
+      iteration: loop,
+      maxIterations: MAX_TOOL_ITERATIONS,
+      hasToolCalls: false,
+    })
     const base = fullContent
     let iter = ''
     const storyContext = callbacks.getStoryContext?.() ?? null
+    const genStart = Date.now()
     const r = await kpInvokeOnce(msgs, aiConfig, (chunk) => {
       iter += chunk
       const preview = base ? base + '\n\n' + iter : iter
@@ -100,6 +111,13 @@ export async function runKpAgentLoop(
       fullContent = base ? base + '\n\n' + iterFinal : iterFinal
     }
     callbacks.onStreamChunk(fullContent)
+
+    traceBus.emit('kp_agent', 'llm_generate_end', {
+      responseLength: iterFinal.length,
+      hasToolCalls: !!(r?.toolCalls?.length),
+      toolCallCount: r?.toolCalls?.length ?? 0,
+      durationMs: Date.now() - genStart,
+    })
 
     if (!r?.toolCalls?.length) break
 
@@ -133,6 +151,7 @@ export async function runDirectChat(
   aiConfig: AIProviderConfig,
   callbacks: DirectChatCallbacks
 ): Promise<string> {
+  traceBus.emit('kp_agent', 'direct_chat_used', { reason: 'no_kp_agent_available' })
   let fullContent = ''
   const result = await chat(aiConfig, { messages: chatMessages, stream: true })
   if (isStreamResponse(result)) {

@@ -45,6 +45,7 @@ const KPState = Annotation.Root({
   agentType:           Annotation({ reducer: (_, r) => r, default: () => 'generic' }),
   storyContext:        Annotation({ reducer: (_, r) => r, default: () => null }),
   narrativeStallLevel: Annotation({ reducer: (_, r) => r, default: () => 0 }),
+  _traceEvents:        Annotation({ reducer: (prev, r) => (prev || []).concat(Array.isArray(r) ? r : [r]), default: () => [] }),
 })
 
 /* ================================================================== */
@@ -231,19 +232,25 @@ function createAnalyzeNode(invokeLLM) {
     var userText = (lastUser && lastUser.content) ? lastUser.content.trim() : ''
 
     var playerIntent = 'narrative'
+    var rawLLMOutput = ''
     if (userText) {
       try {
         var result = await invokeLLM([
           { role: 'system', content: '只回复一个英文意图关键词，例如 narrative 或 investigate。不要解释。' },
           { role: 'user', content: INTENT_CLASSIFIER_PROMPT + userText },
         ])
-        playerIntent = parseIntent(typeof result === 'string' ? result : ((result && result.content) || ''))
+        rawLLMOutput = typeof result === 'string' ? result : ((result && result.content) || '')
+        playerIntent = parseIntent(rawLLMOutput)
       } catch (_e) {
         playerIntent = 'narrative'
       }
     }
 
-    return { playerIntent: playerIntent, retryCount: 0 }
+    return {
+      playerIntent: playerIntent,
+      retryCount: 0,
+      _traceEvents: [{ span: 'kp_agent', type: 'intent_classified', data: { intent: playerIntent, rawLLMOutput: rawLLMOutput } }],
+    }
   }
 }
 
@@ -262,7 +269,10 @@ function createRouteByIntentNode() {
     } else if (intent === 'use_item') {
       agent = 'resource'
     }
-    return { agentType: agent }
+    return {
+      agentType: agent,
+      _traceEvents: [{ span: 'kp_agent', type: 'agent_routed', data: { agentType: agent, intent: intent } }],
+    }
   }
 }
 
@@ -402,10 +412,12 @@ function createPlanNode(agentKind) {
       required = filtered
     }
 
+    var nextStallLevel = stallInfo ? stallInfo.nextStallLevel : (state.narrativeStallLevel || 0)
     return {
       requiredTools: required,
       toolPlan: plan.plan,
-      narrativeStallLevel: stallInfo ? stallInfo.nextStallLevel : (state.narrativeStallLevel || 0),
+      narrativeStallLevel: nextStallLevel,
+      _traceEvents: [{ span: 'kp_agent', type: 'tool_plan_created', data: { requiredTools: required, plan: plan.plan, stallLevel: nextStallLevel } }],
     }
   }
 }
@@ -504,11 +516,20 @@ function createGenerateNode(invokeLLM, agentKind) {
       enhancedMsgs.unshift({ role: 'system', content: hintBlock })
     }
 
+    var genStartTime = Date.now()
     var result = await invokeLLM(enhancedMsgs)
     var content = typeof result === 'string' ? result : ((result && result.content) || '')
     var toolCalls = (typeof result === 'object' && result && result.toolCalls) ? result.toolCalls : undefined
+    var genDuration = Date.now() - genStartTime
 
-    return { response: content || '', toolCalls: toolCalls }
+    return {
+      response: content || '',
+      toolCalls: toolCalls,
+      _traceEvents: [
+        { span: 'kp_agent', type: 'llm_generate_start', data: { messageCount: enhancedMsgs.length, agentType: agentKind } },
+        { span: 'kp_agent', type: 'llm_generate_end', data: { responseLength: (content || '').length, hasToolCalls: !!(toolCalls && toolCalls.length), toolCallCount: toolCalls ? toolCalls.length : 0, durationMs: genDuration } },
+      ],
+    }
   }
 }
 
@@ -539,19 +560,25 @@ function createValidateNode() {
 
     var simulated = hasTextSimulation(response)
 
+    var traceData = { span: 'kp_agent', type: 'validation_result', data: { result: 'valid', hasSimulation: simulated, missingTools: missingTools, retryCount: retryCount } }
+
     if (missingTools.length === 0 && !simulated) {
-      return { validationResult: 'valid' }
+      traceData.data.result = 'valid'
+      return { validationResult: 'valid', _traceEvents: [traceData] }
     }
 
     if (retryCount >= 1) {
       var cleanedResponse = simulated ? cleanTextSimulation(response) : response
-      return { validationResult: 'max_retries', response: cleanedResponse }
+      traceData.data.result = 'max_retries'
+      return { validationResult: 'max_retries', response: cleanedResponse, _traceEvents: [traceData] }
     }
 
     var cleanedForRetry = simulated ? cleanTextSimulation(response) : response
+    traceData.data.result = 'missing_tools'
     return {
       validationResult: 'missing_tools',
       response: cleanedForRetry,
+      _traceEvents: [traceData],
     }
   }
 }
@@ -617,6 +644,7 @@ function createForceToolNode(invokeLLM) {
     return {
       toolCalls: merged.length > 0 ? merged : undefined,
       retryCount: retryCount + 1,
+      _traceEvents: [{ span: 'kp_agent', type: 'force_tools_invoked', data: { requiredTools: required, newToolCount: newToolCalls ? newToolCalls.length : 0 } }],
     }
   }
 }
@@ -713,5 +741,6 @@ export async function invokeKPAgent(messages, invokeLLM, storyContext) {
   return {
     content: result.response || '',
     toolCalls: (result.toolCalls && result.toolCalls.length > 0) ? result.toolCalls : undefined,
+    _traceEvents: result._traceEvents || [],
   }
 }

@@ -4,6 +4,7 @@
  */
 import type { ToolCall, ToolHandler, ToolHandlerContext, ToolHandlerResult } from './types'
 import type { Message } from '../types/game'
+import { traceBus } from '../services/tracing'
 import { checkHandler } from './handlers/checkHandler'
 import { combatHandler } from './handlers/combatHandler'
 import { sanityHandler } from './handlers/sanityHandler'
@@ -56,11 +57,13 @@ export function processToolCalls(
   for (const tc of toolCalls) {
     let content: string
     let messages: Message[] = []
+    const toolStart = Date.now()
+    let parsedArgs: Record<string, unknown> = {}
     try {
-      const args = JSON.parse(tc.arguments || '{}') as Record<string, unknown>
+      parsedArgs = JSON.parse(tc.arguments || '{}') as Record<string, unknown>
       const handler = NAME_TO_HANDLER.get(tc.name)
       if (handler) {
-        const result: ToolHandlerResult = handler.handle(tc.name, args, context)
+        const result: ToolHandlerResult = handler.handle(tc.name, parsedArgs, context)
         content = result.content
         messages = result.displayMessages
       } else {
@@ -71,6 +74,13 @@ export function processToolCalls(
       const reason = e instanceof Error ? e.message : String(e)
       content = `error: ${reason}`
     }
+    traceBus.emit('tool_execution', 'tool_executed', {
+      name: tc.name,
+      args: parsedArgs,
+      resultSummary: content.slice(0, 300),
+      success: !content.startsWith('error'),
+      durationMs: Date.now() - toolStart,
+    })
     toolResults.push({ role: 'tool', tool_call_id: tc.id, content })
     displayMessages.push(...messages)
   }

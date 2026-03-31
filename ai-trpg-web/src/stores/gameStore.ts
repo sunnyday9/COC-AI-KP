@@ -22,6 +22,8 @@ import { summarizeLongTerm } from '../services/memoryService'
 import { buildToolContext } from '../services/toolContextFactory'
 import { buildOpeningPrompt, buildTurnPrompt, buildCharacterContext, buildMemoryBlock, buildRecentTurnsBlock, type PromptState } from '../services/kpPromptService'
 import { SAVE_VERSION, writeSaveSnapshot, readSaveSnapshot, listSaveIds, readSaveMeta } from '../services/saveService'
+import { traceBus } from '../services/tracing'
+import type { CharacterSnapshot } from '../services/tracing'
 
 function generateId(): string {
   return 'msg_' + Date.now() + '_' + Math.random().toString(36).slice(2, 9)
@@ -159,8 +161,29 @@ export const useGameStore = defineStore('game', () => {
     if (last) messages.value.push(last)
   }
 
+  function buildCharacterSnapshotForTrace(): CharacterSnapshot | null {
+    const c = characterSheet.value
+    if (!c?.derived) return null
+    return {
+      hp: c.derived.hp, hpMax: c.derived.hpMax,
+      mp: c.derived.mp, mpMax: c.derived.mpMax,
+      san: c.derived.san, sanMax: c.derived.sanMax,
+      luck: c.attributes?.luck ?? 0,
+      insanityState: c.insanityState ?? 'normal',
+      hasMajorWound: c.hasMajorWound ?? false,
+      isDying: c.isDying ?? false,
+      dailySanLoss: c.dailySanLoss ?? 0,
+    }
+  }
+
+  function emitCharacterSnapshot(label: string) {
+    const snap = buildCharacterSnapshotForTrace()
+    if (snap) traceBus.emit('state_update', 'character_snapshot', snap)
+  }
+
   function addClue(description: string) {
     if (!cluesObtained.value.includes(description)) cluesObtained.value.push(description)
+    traceBus.emit('state_update', 'clue_added', { description })
     if (storyId.value && sessionId.value) {
       addUserGraphEvent({
         storyId: storyId.value,
@@ -171,7 +194,9 @@ export const useGameStore = defineStore('game', () => {
   }
 
   function transitionToScene(sceneName: string) {
+    const from = currentScene.value
     currentScene.value = sceneName
+    traceBus.emit('state_update', 'scene_changed', { from, to: sceneName })
     if (storyId.value && sessionId.value) {
       addUserGraphEvent({
         storyId: storyId.value,
@@ -208,12 +233,20 @@ export const useGameStore = defineStore('game', () => {
     const sid = storyId.value
     const sessId = sessionId.value
     const ragQuery = [currentScene.value, ...cluesObtained.value.slice(0, 5)].filter(Boolean).join(' ') || '当前场景 已获线索 调查进展'
+    const triggerType = currentScene.value !== '' ? 'scene_change' as const : 'periodic' as const
+    traceBus.emit('long_term_summary', 'summary_triggered', { trigger: triggerType, playerTurnCount: playerTurnCount.value })
     Promise.all([
       sid ? getContext({ query: ragQuery, scriptId: sid, sceneId: currentScene.value || undefined, topK: 5 }) : Promise.resolve({ context: '' }),
       sid && sessId ? getUserGraphSummary(sid, sessId) : Promise.resolve(''),
     ])
       .then(([ctxRes, userGraphSummary]) => {
         const ragContextText = ctxRes?.context || ''
+        traceBus.emit('long_term_summary', 'summary_input', {
+          recentMessagesLength: recentText.length,
+          currentSummaryLength: current.length,
+          ragContextLength: ragContextText.length,
+          userGraphLength: (userGraphSummary || '').length,
+        })
         return summarizeLongTerm(aiConfig, {
           recentMessagesText: recentText,
           currentSummary: current,
@@ -223,7 +256,13 @@ export const useGameStore = defineStore('game', () => {
         })
       })
       .then((next) => {
-        if (next) longTermSummary.value = next
+        if (next) {
+          longTermSummary.value = next
+          traceBus.emit('long_term_summary', 'summary_output', {
+            newSummaryLength: next.length,
+            newSummaryPreview: next.slice(0, 200),
+          })
+        }
       })
       .catch(() => { /* fire-and-forget; avoid unhandled rejection */ })
   }
@@ -475,6 +514,9 @@ export const useGameStore = defineStore('game', () => {
   async function requestOpening() {
     if (gamePhase.value !== 'playing' || !characterSheet.value || !storyId.value || messages.value.length > 0 || isSending.value) return
     isSending.value = true
+    const turnId = 'opening_' + Date.now()
+    traceBus.startTrace(turnId)
+    emitCharacterSnapshot('before_opening')
     addMessage({ id: generateId(), timestamp: Date.now(), role: 'kp', content: '', isStreaming: true })
     try {
       const settingsStore = useSettingsStore()
@@ -483,6 +525,14 @@ export const useGameStore = defineStore('game', () => {
 
       const ragContext = await fetchRagContext('开场 故事背景 场景描述 第一幕')
       const { chatMessages } = buildOpeningPrompt(toPromptState(), ragContext)
+      traceBus.emit('prompt_assembly', 'system_prompt_built', {
+        totalLength: chatMessages.reduce((n, m) => n + m.content.length, 0),
+        hasLongTermSummary: !!longTermSummary.value,
+        longTermSummaryLength: longTermSummary.value.length,
+        memoryEntries: kpMemory.value.length,
+        ragContextLength: ragContext.length,
+        conversationWindowSize: 0,
+      })
 
       const fullContent = hasKpAgent()
         ? await runKpAgentLoopService(chatMessages, aiConfig, {
@@ -497,16 +547,25 @@ export const useGameStore = defineStore('game', () => {
 
       if (fullContent.trim()) {
         kpMemory.value = [...kpMemory.value.slice(-MAX_MEMORY_ENTRIES + 1), sanitizeKpResponse(fullContent)]
+        traceBus.emit('state_update', 'memory_updated', {
+          kpMemoryLength: kpMemory.value.length,
+          newEntryPreview: sanitizeKpResponse(fullContent).slice(0, 150),
+        })
       }
+      emitCharacterSnapshot('after_opening')
       updateLastMessage((m) => { if (m.role === 'kp') m.isStreaming = false })
     } catch (e) {
+      traceBus.emit('kp_agent', 'trace_error', { source: 'requestOpening', message: e instanceof Error ? e.message : String(e) })
       updateLastMessage((m) => {
         if (m.role === 'kp') {
           m.content = '[开场生成失败: ' + (e instanceof Error ? e.message : String(e)) + ']'
           m.isStreaming = false
         }
       })
-    } finally { isSending.value = false }
+    } finally {
+      traceBus.endTrace()
+      isSending.value = false
+    }
   }
 
   async function sendPlayerMessage(content: string) {
@@ -514,6 +573,9 @@ export const useGameStore = defineStore('game', () => {
     addMessage({ id: generateId(), timestamp: Date.now(), role: 'player', playerName: playerName.value, content: content.trim() })
     playerTurnCount.value += 1
     isSending.value = true
+    const turnId = 'turn_' + playerTurnCount.value + '_' + Date.now()
+    traceBus.startTrace(turnId)
+    emitCharacterSnapshot('before_turn')
     addMessage({ id: generateId(), timestamp: Date.now(), role: 'kp', content: '', isStreaming: true })
 
     try {
@@ -523,6 +585,14 @@ export const useGameStore = defineStore('game', () => {
 
       const ragContext = await fetchRagContext(content)
       const { chatMessages } = buildTurnPrompt(toPromptState(), ragContext)
+      traceBus.emit('prompt_assembly', 'system_prompt_built', {
+        totalLength: chatMessages.reduce((n, m) => n + m.content.length, 0),
+        hasLongTermSummary: !!longTermSummary.value,
+        longTermSummaryLength: longTermSummary.value.length,
+        memoryEntries: kpMemory.value.length,
+        ragContextLength: ragContext.length,
+        conversationWindowSize: chatMessages.length - 1,
+      })
 
       const fullContent = hasKpAgent()
         ? await runKpAgentLoopService(chatMessages, aiConfig, {
@@ -537,16 +607,25 @@ export const useGameStore = defineStore('game', () => {
 
       if (fullContent.trim()) {
         kpMemory.value = [...kpMemory.value.slice(-MAX_MEMORY_ENTRIES + 1), sanitizeKpResponse(fullContent)]
+        traceBus.emit('state_update', 'memory_updated', {
+          kpMemoryLength: kpMemory.value.length,
+          newEntryPreview: sanitizeKpResponse(fullContent).slice(0, 150),
+        })
       }
+      emitCharacterSnapshot('after_turn')
       updateLastMessage((m) => { if (m.role === 'kp') m.isStreaming = false })
       if (playerTurnCount.value >= LONG_TERM_SUMMARY_EVERY_N_TURNS && playerTurnCount.value % LONG_TERM_SUMMARY_EVERY_N_TURNS === 0) {
         runLongTermSummarization()
       }
     } catch (e) {
+      traceBus.emit('kp_agent', 'trace_error', { source: 'sendPlayerMessage', message: e instanceof Error ? e.message : String(e) })
       updateLastMessage((m) => {
         if (m.role === 'kp') { m.content = '[错误: ' + (e instanceof Error ? e.message : String(e)) + ']'; m.isStreaming = false }
       })
-    } finally { isSending.value = false }
+    } finally {
+      traceBus.endTrace()
+      isSending.value = false
+    }
   }
 
   return {

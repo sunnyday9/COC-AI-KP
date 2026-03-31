@@ -110,14 +110,14 @@ function registerKPAgentHandlers() {
       return { content: '' }
     }
 
-    try {
-      const invokeKPAgent = await getInvokeKPAgent()
-      const invokeLLM = buildInvokeLLM(pProvider, pModel, pBaseUrl, pApiKey, pTemp, pMax)
-      const { content, toolCalls } = await invokeKPAgent(messages, invokeLLM, storyContext)
-      if (content || (toolCalls && toolCalls.length > 0)) {
-        return { content, toolCalls }
-      }
-    } catch (err) {
+      try {
+        const invokeKPAgent = await getInvokeKPAgent()
+        const invokeLLM = buildInvokeLLM(pProvider, pModel, pBaseUrl, pApiKey, pTemp, pMax)
+        const { content, toolCalls, _traceEvents } = await invokeKPAgent(messages, invokeLLM, storyContext)
+        if (content || (toolCalls && toolCalls.length > 0)) {
+          return { content, toolCalls, _traceEvents: _traceEvents || [] }
+        }
+      } catch (err) {
       logError('KP', 'Graph failed in kp:invoke, falling back to direct LLM', { error: err?.message || String(err) })
     }
 
@@ -141,12 +141,14 @@ function registerKPAgentHandlers() {
       let content = ''
       let toolCalls
 
+      let traceEvents = []
       try {
         const invokeKPAgent = await getInvokeKPAgent()
         const invokeLLM = buildStreamInvokeLLM(pProvider, pModel, pBaseUrl, pApiKey, pTemp, pMax, event, streamId)
         const result = await invokeKPAgent(messages, invokeLLM, storyContext)
         content = result.content ?? ''
         toolCalls = result.toolCalls
+        traceEvents = result._traceEvents || []
       } catch (err) {
         logError('KP', 'Graph failed in kp:invokeStream, falling back to direct LLM', { error: err?.message || String(err) })
         try {
@@ -168,6 +170,9 @@ function registerKPAgentHandlers() {
         } catch (_e) { /* use empty content */ }
       }
 
+      if (traceEvents.length > 0) {
+        event.sender.send('kp:stream', { streamId, type: 'trace', traceEvents })
+      }
       event.sender.send('kp:stream', { streamId, type: 'end', content, toolCalls })
     })()
 

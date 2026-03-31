@@ -3,6 +3,7 @@
  * No external Python service required.
  */
 import type { RAGChunk } from '../types/script'
+import { traceBus } from './tracing'
 
 export interface RAGChunkResult {
   content: string
@@ -115,12 +116,24 @@ export async function getContext(params: {
 }): Promise<{ context: string; graphSummary?: string }> {
   const api = getApi()
   if (!api?.ragContext) return { context: '' }
-  return api.ragContext({
+  traceBus.emit('rag_retrieval', 'rag_query_sent', {
+    query: params.query,
+    scriptId: params.scriptId,
+    topK: params.topK ?? 5,
+  })
+  const result = await api.ragContext({
     query: params.query,
     scriptId: params.scriptId,
     sceneId: params.sceneId,
     topK: params.topK ?? 5,
   })
+  traceBus.emit('rag_retrieval', 'rag_context_received', {
+    chunkCount: 0,
+    contextLength: result?.context?.length ?? 0,
+    hasGraphSummary: !!(result?.graphSummary),
+    hasUserGraph: false,
+  })
+  return result
 }
 
 /** Add user graph event (clue obtained, scene visited, etc.). */
@@ -143,6 +156,20 @@ export async function syncUserGraphFromState(params: {
   const api = getApi()
   if (!api?.ragUserGraphSync) return
   await api.ragUserGraphSync(params)
+}
+
+/** Get full chunk index for a story (dev/inspector use). */
+export async function getStoryIndex(scriptId: string) {
+  const api = getApi()
+  if (!api?.ragGetIndex) return { scriptId, storyName: scriptId, chunkCount: 0, chunks: [] }
+  return api.ragGetIndex({ scriptId })
+}
+
+/** Get full graph data for a story (dev/inspector use). */
+export async function getStoryGraph(scriptId: string) {
+  const api = getApi()
+  if (!api?.ragGetGraph) return null
+  return api.ragGetGraph({ scriptId })
 }
 
 /** Get user graph summary for memory/context. */

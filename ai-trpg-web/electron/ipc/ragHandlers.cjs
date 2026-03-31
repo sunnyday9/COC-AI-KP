@@ -136,6 +136,72 @@ function registerRAGHandlers() {
     })
   })
 
+  ipcMain.handle('rag:getIndex', async (_, params) => {
+    const { scriptId } = params || {}
+    if (!scriptId) return { scriptId: '', storyName: '', chunkCount: 0, chunks: [] }
+    const rag = await getRagModule()
+    const storyInfo = rag.listIndexedStories().find(s => s.storyId === scriptId)
+    let chunks = []
+    try {
+      const { app: elApp } = require('electron')
+      const fs = require('fs')
+      const idxPath = path.join(
+        elApp.getPath('userData'), 'rag_index',
+        scriptId.replace(/[^a-zA-Z0-9_\-\u4e00-\u9fff]/g, '_') + '.json'
+      )
+      if (fs.existsSync(idxPath)) {
+        const raw = JSON.parse(fs.readFileSync(idxPath, 'utf-8'))
+        chunks = (raw.docs || []).map(d => ({
+          id: d.id,
+          content: d.content,
+          type: d.type,
+          metadata: d.metadata || {},
+          hasVector: Array.isArray(d.vector) && d.vector.length > 0,
+        }))
+      }
+    } catch {}
+    return {
+      scriptId,
+      storyName: storyInfo?.name || scriptId,
+      chunkCount: chunks.length,
+      chunks,
+    }
+  })
+
+  ipcMain.handle('rag:getGraph', async (_, params) => {
+    const { scriptId } = params || {}
+    if (!scriptId) return null
+    try {
+      const graphModule = await import(pathToFileURL(path.join(__dirname, '..', 'rag', 'graphStore.mjs')).href)
+      const graph = graphModule.getGraph(scriptId)
+      if (!graph) return null
+      return {
+        scriptId: graph.scriptId,
+        storyName: graph.storyName,
+        indexedAt: graph.indexedAt,
+        nodeCount: graph.nodeCount || (graph.nodes || []).length,
+        edgeCount: graph.edgeCount || (graph.edges || []).length,
+        nodes: (graph.nodes || []).map(n => ({
+          id: n.id,
+          type: n.type,
+          name: n.name,
+          content: n.content || '',
+          communityId: n.communityId || null,
+          chunkIds: n.chunkIds || [],
+        })),
+        edges: (graph.edges || []).map(e => ({
+          source: e.source,
+          target: e.target,
+          type: e.type,
+          label: e.label || '',
+        })),
+        communitySummaries: graph.communitySummaries || {},
+      }
+    } catch {
+      return null
+    }
+  })
+
   ipcMain.handle('rag:userGraphAdd', async (_, params) => {
     const { storyId, sessionId, event } = params || {}
     if (!storyId || !sessionId || !event) return

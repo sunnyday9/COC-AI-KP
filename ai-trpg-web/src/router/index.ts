@@ -3,6 +3,10 @@ import type { RouteRecordRaw } from 'vue-router'
 import AppLayout from '../components/layout/AppLayout.vue'
 import { useGameStore } from '../stores/gameStore'
 
+const devRoutes: RouteRecordRaw[] = import.meta.env.DEV
+  ? [{ path: 'rag-inspector', name: 'rag-inspector', component: () => import('../views/RagInspectorView.vue'), meta: { title: 'RAG Inspector' } }]
+  : []
+
 const routes: RouteRecordRaw[] = [
   {
     path: '/',
@@ -14,6 +18,7 @@ const routes: RouteRecordRaw[] = [
       { path: 'character-create', name: 'character-create', component: () => import('../views/CharacterCreateView.vue'), meta: { title: '创建角色' } },
       { path: 'game', name: 'game', component: () => import('../views/GameRoomView.vue'), meta: { title: '游戏房间', requiresGame: true } },
       { path: 'settings', name: 'settings', component: () => import('../views/SettingsView.vue'), meta: { title: '设置' } },
+      ...devRoutes,
     ],
   },
 ]
