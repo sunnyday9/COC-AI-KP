@@ -90,21 +90,21 @@
 
 | 类别 | 数量 |
 |------|------|
-| Vue 组件/页面 | 9 个 (.vue) |
-| TypeScript 源码 | 29 个 (.ts) |
+| Vue 组件/页面 | 13 个 (.vue) |
+| TypeScript 源码 | 33 个 (.ts) |
 | 测试文件 | 24 个 (.spec.ts) |
 | Electron 主进程 | 25 个 (.cjs/.mjs/.js) |
-| **总源码文件** | **约 87 个** |
+| **总源码文件** | **约 95 个** |
 
 ### 3.2 目录职责
 
 ```
 ai-trpg-web/
 ├── src/                          # 渲染进程（Vue SPA）
-│   ├── views/          (6)       # 页面级组件
-│   ├── components/     (4)       # 可复用组件（game/layout/ui）
-│   ├── stores/         (3)       # Pinia 状态（game/settings/story）
-│   ├── services/       (10)      # 业务服务层（AI/KP/RAG/骰子/存档等）
+│   ├── views/          (7)       # 页面级组件（含 RagInspectorView）
+│   ├── components/     (7)       # 可复用组件（game/layout/ui/rag）
+│   ├── stores/         (4)       # Pinia 状态（game/settings/story/debug）
+│   ├── services/       (13)      # 业务服务层（AI/KP/RAG/骰子/存档/tracing 等）
 │   ├── toolCalling/    (9)       # 工具编排 + 5 类 Handler
 │   ├── logic/          (5)       # COC 规则纯函数
 │   ├── types/          (4)       # TypeScript 类型定义
@@ -112,6 +112,10 @@ ai-trpg-web/
 │   ├── composables/    (1)       # Vue 组合式函数
 │   ├── router/         (1)       # 路由配置
 │   └── utils/          (1)       # 工具函数
+│
+│   （新增子目录）
+│   ├── services/tracing/  (3)    # KPTrace 可观测性事件总线
+│   └── components/rag/    (3)    # RAG Inspector 组件（ChunkBrowser/GraphBrowser/SearchTester）
 │
 ├── electron/                     # Electron 主进程（Node.js）
 │   ├── agent/          (1)       # LangGraph KP 状态机
@@ -150,15 +154,15 @@ ai-trpg-web/
 │  ┌───────────────────────────┐  │ └──────────┘ └────────────┘ │ │
 │  │ RAG System                │  └──────────────────────────────┘ │
 │  │ ┌─────────┐ ┌──────────┐ │                                   │
-│  │ │ TF-IDF  │ │ GraphRAG │ │                                   │
-│  │ │ Vector  │ │ (图谱+   │ │                                   │
-│  │ │ Store   │ │  社区摘要)│ │                                   │
-│  │ └─────────┘ └──────────┘ │                                   │
-│  │ ┌──────────────────────┐ │                                   │
-│  │ │ User Action Graph    │ │                                   │
-│  │ │ (线索/场景/检定记录) │ │                                   │
-│  │ └──────────────────────┘ │                                   │
-│  └───────────────────────────┘                                   │
+│  │ │ TF-IDF  │ │ GraphRAG │ │  ┌──────────────────────────────┐ │
+│  │ │ Vector  │ │ (图谱+   │ │  │ Observability (KPTrace)      │ │
+│  │ │ Store   │ │  社区摘要)│ │  │ ┌──────────┐ ┌────────────┐ │ │
+│  │ └─────────┘ └──────────┘ │  │ │ traceBus  │ │ debugStore │ │ │
+│  │ ┌──────────────────────┐ │  │ │ (事件总线)│ │ (Pinia)    │ │ │
+│  │ │ User Action Graph    │ │  │ └──────────┘ └────────────┘ │ │
+│  │ │ (线索/场景/检定记录) │ │  │ 28 事件类型 × 6 Span        │ │
+│  │ └──────────────────────┘ │  │ Main→Renderer via kp:stream  │ │
+│  └───────────────────────────┘  └──────────────────────────────┘ │
 └───────────────────────────────────────────────────────────────────┘
 ```
 
@@ -372,6 +376,7 @@ flowchart TB
 | `/character-create` | `CharacterCreateView.vue` | 角色创建（属性骰/技能分配） |
 | `/game` | `GameRoomView.vue` | 游戏房间（受路由守卫保护） |
 | `/settings` | `SettingsView.vue` | AI/RAG 配置 |
+| `/rag-inspector` | `RagInspectorView.vue` | RAG 调试面板（**仅 dev 模式**，`import.meta.env.DEV` 编译时排除） |
 
 ### 8.2 路由守卫
 
@@ -387,6 +392,10 @@ AppLayout.vue              # 全局布局壳
 ├── game/
 │   ├── ChatMessage.vue    # 消息气泡（KP/玩家/系统/骰子）
 │   └── PlayerStatsBar.vue # 角色状态栏（HP/MP/SAN/Luck 等）
+├── rag/                   # RAG Inspector 子组件（dev-only）
+│   ├── ChunkBrowser.vue   # 分块浏览：分页/类型筛选/全文搜索/详情展开
+│   ├── GraphBrowser.vue   # 图谱浏览：节点列表/边表/社区摘要/连边详情
+│   └── SearchTester.vue   # 搜索测试：输入查询 → ragQuery/ragContext → 结果+耗时
 └── ui/
     └── ToastContainer.vue # 全局 Toast 提示
 ```
@@ -407,8 +416,9 @@ AppLayout.vue              # 全局布局壳
 | Store | 职责 |
 |-------|------|
 | **gameStore** | 会话 ID、故事 ID、场景、线索、消息列表、角色卡、KP 记忆、长期摘要、游戏阶段；核心行为：`sendPlayerMessage`、`requestOpening`、`processToolCalls`、存档读写 |
-| **settingsStore** | AI Provider / Base URL / API Key / Model / RAG 开关；`load()` / `save()` 通过 IPC |
+| **settingsStore** | AI Provider / Base URL / API Key / Model / RAG 开关 / `debugMode`；`load()` / `save()` 通过 IPC |
 | **storyStore** | 故事文件列表、导入/删除、RAG 索引（单故事/全部） |
+| **debugStore** | KPTrace 可观测性数据：traces 列表 + 实时事件流；为 Debug Panel 提供响应式数据源 |
 
 ### 9.2 核心类型定义
 
@@ -543,6 +553,7 @@ AppLayout.vue              # 全局布局壳
 | Sprint | 主题 | 状态 |
 |--------|------|------|
 | **Sprint 1** | 治疗与 Max SAN（急救/医学/自然恢复/Max SAN clamp） | ✅ 已完成 |
+| **Sprint 1.5** | 可观测性基础设施（KPTrace + RAG Inspector） | ✅ 已完成 |
 | **Sprint 2** | 幕间成长与环境伤害 | 🔲 占位函数已建 |
 | **Sprint 3** | 魔法系统与 SAN 恢复 | 🔲 未开始 |
 | **Sprint 4** | 追逐系统与先攻/战技 | 🔲 未开始 |
@@ -564,6 +575,8 @@ AppLayout.vue              # 全局布局壳
 | 长期记忆摘要 | ✅ |
 | 单元测试框架 + 137 用例 | ✅ |
 | E2E 测试框架 | ✅（框架就绪，用例少） |
+| KPTrace 可观测性系统（事件总线 + 结构化 Trace） | ✅ |
+| RAG Inspector 开发调试页面（dev-only） | ✅ |
 
 ---
 
@@ -597,7 +610,7 @@ AppLayout.vue              # 全局布局壳
 
 ### 15.1 项目健康度总评
 
-**项目整体处于良好的开发状态**，核心架构扎实、规则实现严谨、AI 集成完善。Sprint 1 已完成，基础设施成熟度高。
+**项目整体处于良好的开发状态**，核心架构扎实、规则实现严谨、AI 集成完善。Sprint 1 已完成，基础设施成熟度高。新增的 **KPTrace 可观测性系统**（28 种事件类型、6 类 Span 的结构化 Trace）与 **RAG Inspector** 开发调试页面显著提升了开发期间的调试与诊断能力。
 
 ### 15.2 恢复开发建议（优先级排序）
 
