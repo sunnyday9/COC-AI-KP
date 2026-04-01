@@ -19,20 +19,27 @@ import { getSkillName } from '../data/coc7'
 import { useSettingsStore } from './settingsStore'
 import { processToolCalls as processToolCallsOrchestrator } from '../toolCalling'
 import { summarizeLongTerm } from '../services/memoryService'
+import { extractMemoryPoints } from '../services/memoryExtractService'
 import { buildToolContext } from '../services/toolContextFactory'
 import { buildOpeningPrompt, buildTurnPrompt, buildCharacterContext, buildMemoryBlock, buildRecentTurnsBlock, type PromptState } from '../services/kpPromptService'
 import { SAVE_VERSION, writeSaveSnapshot, readSaveSnapshot, listSaveIds, readSaveMeta } from '../services/saveService'
 import { traceBus } from '../services/tracing'
 import type { CharacterSnapshot } from '../services/tracing'
+import type { EndingState, GameOutcome } from '../types/ending'
 
 function generateId(): string {
   return 'msg_' + Date.now() + '_' + Math.random().toString(36).slice(2, 9)
 }
 
+const MAX_MEMORY_ENTRIES = 30
 /** Run long-term summarization every N player turns. */
-const LONG_TERM_SUMMARY_EVERY_N_TURNS = 10
+const LONG_TERM_SUMMARY_EVERY_N_TURNS = 5
 /** Number of recent messages to include in long-term summarization input. */
 const SUMMARIZE_RECENT_MESSAGES = 20
+
+type SummarizationTrigger = 'scene_change' | 'periodic' | 'high_impact_tool'
+
+const HIGH_IMPACT_TOOLS = new Set(['grant_clue', 'melee_attack', 'ranged_attack', 'san_check', 'trigger_insanity'])
 
 function sanitizeKpResponse(content: string): string {
   if (!content?.trim()) return content
@@ -51,19 +58,6 @@ function sanitizeKpResponse(content: string): string {
     out = out.replace(p, '')
   }
   return out.replace(/\n{3,}/g, '\n\n').trim()
-}
-
-function toPromptState(): PromptState {
-  return {
-    storyName: storyName.value,
-    currentScene: currentScene.value,
-    cluesObtained: cluesObtained.value,
-    messages: messages.value,
-    kpMemory: kpMemory.value,
-    longTermSummary: longTermSummary.value,
-    playerName: playerName.value,
-    characterSheet: characterSheet.value,
-  }
 }
 
 export const useGameStore = defineStore('game', () => {
@@ -91,10 +85,26 @@ export const useGameStore = defineStore('game', () => {
   const playerName = ref('调查员')
 
   const gamePhase = ref<GamePhase>('story_selected')
+  const endingState = ref<EndingState | null>(null)
+  const scenesVisited = ref<string[]>([])
+  const narrativeStall = ref(0)
   const characterSheet = ref<COCCharacterSheet | null>(null)
   const derivedStatsVersion = ref(0)
   const selectedOccupationId = ref<string | null>(null)
   const selectedOccupationName = ref<string>('')
+
+  function toPromptState(): PromptState {
+    return {
+      storyName: storyName.value,
+      currentScene: currentScene.value,
+      cluesObtained: cluesObtained.value,
+      messages: messages.value,
+      kpMemory: kpMemory.value,
+      longTermSummary: longTermSummary.value,
+      playerName: playerName.value,
+      characterSheet: characterSheet.value,
+    }
+  }
 
   function reset() {
     sessionId.value = null
@@ -108,6 +118,9 @@ export const useGameStore = defineStore('game', () => {
     longTermSummary.value = ''
     longTermFacts.value = []
     playerTurnCount.value = 0
+    endingState.value = null
+    scenesVisited.value = []
+    narrativeStall.value = 0
     isInGame.value = false
     isSending.value = false
     gamePhase.value = 'story_selected'
@@ -178,7 +191,7 @@ export const useGameStore = defineStore('game', () => {
 
   function emitCharacterSnapshot(label: string) {
     const snap = buildCharacterSnapshotForTrace()
-    if (snap) traceBus.emit('state_update', 'character_snapshot', snap)
+    if (snap) traceBus.emit('state_update', 'character_snapshot', { ...snap, label })
   }
 
   function addClue(description: string) {
@@ -196,6 +209,9 @@ export const useGameStore = defineStore('game', () => {
   function transitionToScene(sceneName: string) {
     const from = currentScene.value
     currentScene.value = sceneName
+    if (sceneName && scenesVisited.value[scenesVisited.value.length - 1] !== sceneName) {
+      scenesVisited.value.push(sceneName)
+    }
     traceBus.emit('state_update', 'scene_changed', { from, to: sceneName })
     if (storyId.value && sessionId.value) {
       addUserGraphEvent({
@@ -204,14 +220,61 @@ export const useGameStore = defineStore('game', () => {
         event: { type: 'scene', name: sceneName },
       }).catch(() => {})
     }
-    runLongTermSummarization()
+    runLongTermSummarization('scene_change')
   }
 
-  /** Build recent conversation text for long-term summarization (fire-and-forget). */
-  function runLongTermSummarization() {
+  function endGame(payload: {
+    outcome: GameOutcome
+    title: string
+    summary: string
+    epilogueOptions?: string[]
+    keyFacts?: string[]
+    keyTurnIds?: string[]
+  }) {
+    if (gamePhase.value === 'ended') return
+    const snap = buildCharacterSnapshotForTrace()
+    endingState.value = {
+      outcome: payload.outcome,
+      title: payload.title,
+      summary: payload.summary,
+      epilogueOptions: payload.epilogueOptions ?? [],
+      keyFacts: payload.keyFacts ?? [],
+      keyTurnIds: payload.keyTurnIds ?? [],
+      endedAt: Date.now(),
+      finalSnapshot: snap ? {
+        hp: snap.hp, hpMax: snap.hpMax,
+        san: snap.san, sanMax: snap.sanMax,
+        mp: snap.mp, mpMax: snap.mpMax,
+        luck: snap.luck,
+        insanityState: snap.insanityState,
+        dailySanLoss: snap.dailySanLoss,
+      } : undefined,
+      cluesObtained: [...cluesObtained.value],
+      scenesVisited: [...scenesVisited.value],
+      storyId: storyId.value ?? undefined,
+      storyName: storyName.value || undefined,
+      sessionId: sessionId.value ?? undefined,
+    }
+    gamePhase.value = 'ended'
+    traceBus.emit('state_update', 'game_ended', {
+      outcome: payload.outcome,
+      title: payload.title,
+      summaryLength: payload.summary.length,
+      clues: cluesObtained.value.length,
+      scenes: scenesVisited.value.length,
+    })
+  }
+
+  let _summarizationGen = 0
+  let _summarizationPending = false
+
+  function runLongTermSummarization(trigger?: SummarizationTrigger) {
+    if (_summarizationPending) return
+    _summarizationPending = true
+    const gen = ++_summarizationGen
     const settingsStore = useSettingsStore()
     const aiConfig = settingsStore.aiConfig
-    if (!aiConfig?.model) return
+    if (!aiConfig?.model) { _summarizationPending = false; return }
     const recent = messages.value
       .filter((m): m is Message => m.role === 'player' || m.role === 'kp')
       .slice(-SUMMARIZE_RECENT_MESSAGES)
@@ -232,8 +295,9 @@ export const useGameStore = defineStore('game', () => {
       : ''
     const sid = storyId.value
     const sessId = sessionId.value
-    const ragQuery = [currentScene.value, ...cluesObtained.value.slice(0, 5)].filter(Boolean).join(' ') || '当前场景 已获线索 调查进展'
-    const triggerType = currentScene.value !== '' ? 'scene_change' as const : 'periodic' as const
+    const clueKeywords = cluesObtained.value.slice(0, 5).map(c => c.slice(0, 15)).join(' ')
+    const ragQuery = [currentScene.value, clueKeywords].filter(Boolean).join(' ') || '当前场景'
+    const triggerType = trigger || (currentScene.value !== '' ? 'scene_change' : 'periodic')
     traceBus.emit('long_term_summary', 'summary_triggered', { trigger: triggerType, playerTurnCount: playerTurnCount.value })
     Promise.all([
       sid ? getContext({ query: ragQuery, scriptId: sid, sceneId: currentScene.value || undefined, topK: 5 }) : Promise.resolve({ context: '' }),
@@ -256,7 +320,8 @@ export const useGameStore = defineStore('game', () => {
         })
       })
       .then((next) => {
-        if (next) {
+        if (next && gen === _summarizationGen) {
+          if (current && next.length < Math.floor(current.length * 0.85)) return
           longTermSummary.value = next
           traceBus.emit('long_term_summary', 'summary_output', {
             newSummaryLength: next.length,
@@ -264,7 +329,8 @@ export const useGameStore = defineStore('game', () => {
           })
         }
       })
-      .catch(() => { /* fire-and-forget; avoid unhandled rejection */ })
+      .catch(() => { /* fire-and-forget */ })
+      .finally(() => { _summarizationPending = false })
   }
 
   function updateCharacterHP(delta: number) {
@@ -273,6 +339,15 @@ export const useGameStore = defineStore('game', () => {
     const newHp = Math.max(0, Math.min(c.derived.hpMax, c.derived.hp + delta))
     characterSheet.value = { ...c, derived: { ...c.derived, hp: newHp } }
     derivedStatsVersion.value += 1
+    if (newHp <= 0) {
+      endGame({
+        outcome: 'defeat',
+        title: '调查员死亡',
+        summary: '调查员的生命在黑暗中熄灭。故事以死亡收场，所有未解之谜将继续沉入阴影。',
+        keyFacts: [],
+        epilogueOptions: ['开始新游戏', '回看对话与结局报告'],
+      })
+    }
   }
 
   function updateCharacterMP(delta: number) {
@@ -289,6 +364,15 @@ export const useGameStore = defineStore('game', () => {
     const newSan = Math.max(0, Math.min(c.derived.sanMax, c.derived.san + delta))
     characterSheet.value = { ...c, derived: { ...c.derived, san: newSan } }
     derivedStatsVersion.value += 1
+    if (newSan <= 0) {
+      endGame({
+        outcome: 'defeat',
+        title: '永久疯狂',
+        summary: '理智彻底崩塌。调查员被不可名状的真相吞噬，世界在扭曲的回声中远去。',
+        keyFacts: [],
+        epilogueOptions: ['开始新游戏', '回看对话与结局报告'],
+      })
+    }
   }
 
   function updateCharacterSkill(skillId: string, newValue: number) {
@@ -360,6 +444,8 @@ export const useGameStore = defineStore('game', () => {
 
   type ToolCall = { id: string; name: string; arguments: string }
 
+  let _turnHadHighImpactTool = false
+
   function processToolCalls(toolCalls: ToolCall[]): { toolResults: { role: 'tool'; tool_call_id: string; content: string }[]; displayMessages: Message[] } {
     if (storyId.value && sessionId.value) {
       for (const tc of toolCalls) {
@@ -387,6 +473,10 @@ export const useGameStore = defineStore('game', () => {
         } catch { /* ignore parse errors */ }
       }
     }
+    if (toolCalls.some(tc => HIGH_IMPACT_TOOLS.has(tc.name))) {
+      _turnHadHighImpactTool = true
+    }
+
     const ctx = buildToolContext({
       characterSheet: characterSheet.value,
       updateCharacterHP,
@@ -400,6 +490,14 @@ export const useGameStore = defineStore('game', () => {
       setCharacterDying,
       transitionToScene,
       addClue,
+      endGame: (e) => endGame({
+        outcome: (String((e as Record<string, unknown>).outcome ?? 'unknown') as GameOutcome),
+        title: String((e as Record<string, unknown>).title ?? '结局'),
+        summary: String((e as Record<string, unknown>).summary ?? ''),
+        epilogueOptions: Array.isArray((e as Record<string, unknown>).epilogueOptions) ? ((e as Record<string, unknown>).epilogueOptions as unknown[]).map(String) : [],
+        keyFacts: Array.isArray((e as Record<string, unknown>).keyFacts) ? ((e as Record<string, unknown>).keyFacts as unknown[]).map(String) : [],
+        keyTurnIds: Array.isArray((e as Record<string, unknown>).keyTurnIds) ? ((e as Record<string, unknown>).keyTurnIds as unknown[]).map(String) : [],
+      }),
       generateId,
     })
     return processToolCallsOrchestrator(toolCalls, ctx)
@@ -422,6 +520,9 @@ export const useGameStore = defineStore('game', () => {
         dailySanLoss: dailySanLoss > 0 ? dailySanLoss : undefined,
       }
     }
+    if (narrativeStall.value >= 4) {
+      ctx.forceTransitionScene = true
+    }
     if (Object.keys(ctx).length === 0) return null
     return ctx
   }
@@ -439,8 +540,12 @@ export const useGameStore = defineStore('game', () => {
         sessionId.value ? getUserGraphSummary(storyId.value, sessionId.value) : Promise.resolve(''),
       ])
       let ctx = ctxRes?.context || ''
-      if (userSummary?.trim()) {
-        ctx += (ctx ? '\n\n' : '') + '## 调查员行动记录\n' + userSummary.trim()
+      const trimmedUserGraph = userSummary?.trim() ?? ''
+      if (trimmedUserGraph) {
+        ctx += (ctx ? '\n\n' : '') + '## 调查员行动记录\n' + trimmedUserGraph
+        traceBus.emit('rag_retrieval', 'user_graph_appended', {
+          userGraphLength: trimmedUserGraph.length,
+        })
       }
       return ctx
     } catch { return '' }
@@ -464,6 +569,8 @@ export const useGameStore = defineStore('game', () => {
       selectedOccupationId: selectedOccupationId.value,
       selectedOccupationName: selectedOccupationName.value,
       sessionId: sessionId.value,
+      endingState: endingState.value,
+      scenesVisited: scenesVisited.value,
     })
   }
 
@@ -493,6 +600,8 @@ export const useGameStore = defineStore('game', () => {
     if (typeof data.selectedOccupationId === 'string') selectedOccupationId.value = data.selectedOccupationId
     if (typeof data.selectedOccupationName === 'string') selectedOccupationName.value = data.selectedOccupationName
     if (typeof data.sessionId === 'string') sessionId.value = data.sessionId
+    if (Array.isArray(data.scenesVisited)) scenesVisited.value = data.scenesVisited as string[]
+    if (data.endingState != null) endingState.value = data.endingState as EndingState
     isInGame.value = true
     if (storyId.value && sessionId.value) {
       syncUserGraphFromState({
@@ -546,11 +655,16 @@ export const useGameStore = defineStore('game', () => {
           })
 
       if (fullContent.trim()) {
-        kpMemory.value = [...kpMemory.value.slice(-MAX_MEMORY_ENTRIES + 1), sanitizeKpResponse(fullContent)]
-        traceBus.emit('state_update', 'memory_updated', {
-          kpMemoryLength: kpMemory.value.length,
-          newEntryPreview: sanitizeKpResponse(fullContent).slice(0, 150),
-        })
+        const sanitized = sanitizeKpResponse(fullContent)
+        kpMemory.value = [...kpMemory.value.slice(-(MAX_MEMORY_ENTRIES - 1)), sanitized.slice(0, 80) + '…']
+        extractMemoryPoints(aiConfig, sanitized).then((points) => {
+          const next = [...kpMemory.value.slice(0, -1), ...points]
+          kpMemory.value = next.slice(-MAX_MEMORY_ENTRIES)
+          traceBus.emit('state_update', 'memory_updated', {
+            kpMemoryLength: kpMemory.value.length,
+            newEntryPreview: points.join(' | ').slice(0, 150),
+          })
+        }).catch(() => { /* fallback already in place */ })
       }
       emitCharacterSnapshot('after_opening')
       updateLastMessage((m) => { if (m.role === 'kp') m.isStreaming = false })
@@ -570,6 +684,8 @@ export const useGameStore = defineStore('game', () => {
 
   async function sendPlayerMessage(content: string) {
     if (!content.trim() || isSending.value) return
+    _turnHadHighImpactTool = false
+    let _turnHadProgressTool = false
     addMessage({ id: generateId(), timestamp: Date.now(), role: 'player', playerName: playerName.value, content: content.trim() })
     playerTurnCount.value += 1
     isSending.value = true
@@ -596,7 +712,12 @@ export const useGameStore = defineStore('game', () => {
 
       const fullContent = hasKpAgent()
         ? await runKpAgentLoopService(chatMessages, aiConfig, {
-            processToolCalls,
+            processToolCalls: (calls) => {
+              if (calls.some((c) => ['grant_clue', 'transition_scene', 'skill_check', 'san_check', 'end_game'].includes(c.name))) {
+                _turnHadProgressTool = true
+              }
+              return processToolCalls(calls)
+            },
             onStreamChunk: (preview) => updateLastMessage((m) => { if (m.role === 'kp') m.content = sanitizeKpResponse(preview) }),
             insertMessagesBeforeLast: (msgs) => insertMessagesBeforeLast(msgs as Message[]),
             getStoryContext: buildStoryContext,
@@ -606,16 +727,25 @@ export const useGameStore = defineStore('game', () => {
           })
 
       if (fullContent.trim()) {
-        kpMemory.value = [...kpMemory.value.slice(-MAX_MEMORY_ENTRIES + 1), sanitizeKpResponse(fullContent)]
-        traceBus.emit('state_update', 'memory_updated', {
-          kpMemoryLength: kpMemory.value.length,
-          newEntryPreview: sanitizeKpResponse(fullContent).slice(0, 150),
-        })
+        const sanitized = sanitizeKpResponse(fullContent)
+        kpMemory.value = [...kpMemory.value.slice(-(MAX_MEMORY_ENTRIES - 1)), sanitized.slice(0, 80) + '…']
+        extractMemoryPoints(aiConfig, sanitized).then((points) => {
+          const next = [...kpMemory.value.slice(0, -1), ...points]
+          kpMemory.value = next.slice(-MAX_MEMORY_ENTRIES)
+          traceBus.emit('state_update', 'memory_updated', {
+            kpMemoryLength: kpMemory.value.length,
+            newEntryPreview: points.join(' | ').slice(0, 150),
+          })
+        }).catch(() => { /* fallback already in place */ })
       }
       emitCharacterSnapshot('after_turn')
       updateLastMessage((m) => { if (m.role === 'kp') m.isStreaming = false })
-      if (playerTurnCount.value >= LONG_TERM_SUMMARY_EVERY_N_TURNS && playerTurnCount.value % LONG_TERM_SUMMARY_EVERY_N_TURNS === 0) {
-        runLongTermSummarization()
+
+      narrativeStall.value = _turnHadProgressTool ? 0 : Math.min(10, narrativeStall.value + 1)
+      if (_turnHadHighImpactTool) {
+        runLongTermSummarization('high_impact_tool')
+      } else if (playerTurnCount.value >= LONG_TERM_SUMMARY_EVERY_N_TURNS && playerTurnCount.value % LONG_TERM_SUMMARY_EVERY_N_TURNS === 0) {
+        runLongTermSummarization('periodic')
       }
     } catch (e) {
       traceBus.emit('kp_agent', 'trace_error', { source: 'sendPlayerMessage', message: e instanceof Error ? e.message : String(e) })
@@ -643,6 +773,8 @@ export const useGameStore = defineStore('game', () => {
     isSending,
     playerName,
     gamePhase,
+    endingState,
+    scenesVisited,
     characterSheet,
     derivedStatsVersion,
     reset,

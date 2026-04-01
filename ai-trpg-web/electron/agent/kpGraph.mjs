@@ -264,7 +264,7 @@ function createRouteByIntentNode() {
     var agent = 'generic'
     if (intent === 'combat') agent = 'combat'
     else if (intent === 'san_encounter') agent = 'sanity'
-    else if (intent === 'investigate' || intent === 'explore' || intent === 'talk_npc' || intent === 'move' || intent === 'tool_continuation') {
+    else if (intent === 'investigate' || intent === 'explore' || intent === 'talk_npc' || intent === 'move' || intent === 'tool_continuation' || intent === 'narrative') {
       agent = 'narrative'
     } else if (intent === 'use_item') {
       agent = 'resource'
@@ -361,6 +361,16 @@ function createPlanNode(agentKind) {
       } else if (stallInfo.shouldForceClue) {
         if (required.indexOf('grant_clue') < 0) required.push('grant_clue')
       }
+    }
+
+    // Phase 2.5: narrative/generic SAN auto-check hint from storyContext
+    if ((agentKind === 'narrative' || agentKind === 'generic') && state.storyContext && state.storyContext.sanity && state.storyContext.sanity.autoCheck) {
+      if (required.indexOf('san_check') < 0) required.push('san_check')
+    }
+
+    // Phase 2.6: external anti-stall force transition flag (renderer side)
+    if (agentKind === 'narrative' && state.storyContext && state.storyContext.forceTransitionScene) {
+      if (required.indexOf('transition_scene') < 0) required.push('transition_scene')
     }
 
     // Phase 3: sanityAgent flow based on simple sanity context
@@ -486,7 +496,9 @@ function createGenerateNode(invokeLLM, agentKind) {
         '1）先用 1～2 句通过视觉/听觉/气味等感官强化当前场景氛围；' +
         '2）明确反馈玩家上一行动的直接结果；' +
         '3）给出 2～3 个清晰的下一步可选行动（使用列表或显式提示“你可以选择：…”），引导玩家与场景中的线索或 NPC 互动。' +
-        '如需要推进剧情或给出重要信息，请优先调用 transition_scene / grant_clue / skill_check 等工具，而不是单纯在文本中硬塞信息。'
+      '如需要推进剧情或给出重要信息，请优先调用 transition_scene / grant_clue / skill_check 等工具，而不是单纯在文本中硬塞信息。' +
+      '当你描述调查员首次目睹超自然现象、惨烈尸体、不可名状的恐怖、或任何足以撼动理智的场景时，**必须**调用 san_check，并根据恐怖程度设定 successLoss/failureLoss。' +
+      '当故事已明确结束（真相揭示、逃离成功/失败、团灭/永久疯狂等），**必须**调用 end_game(outcome,title,summary)，然后停止继续推进对话。'
     }
 
     if (agentKind === 'generic') {
@@ -537,6 +549,14 @@ function createGenerateNode(invokeLLM, agentKind) {
 /*  Node 4: Validate (programmatic — no LLM call)                      */
 /* ================================================================== */
 
+// Unidirectional: calling the key tool implicitly satisfies all value tools.
+// e.g. melee_attack internally performs skill_check + roll_dice + adjust_hp.
+// Reverse does NOT hold — calling skill_check+roll_dice+adjust_hp won't satisfy melee_attack.
+var TOOL_EQUIVALENTS = {
+  'melee_attack': ['skill_check', 'roll_dice', 'adjust_hp'],
+  'ranged_attack': ['skill_check', 'roll_dice', 'adjust_hp'],
+}
+
 function createValidateNode() {
   return async function validate(state) {
     var response = state.response || ''
@@ -551,9 +571,19 @@ function createValidateNode() {
       }
     }
 
+    var expandedNames = calledNames.slice()
+    for (var e = 0; e < calledNames.length; e++) {
+      var equiv = TOOL_EQUIVALENTS[calledNames[e]]
+      if (equiv) {
+        for (var q = 0; q < equiv.length; q++) {
+          if (expandedNames.indexOf(equiv[q]) < 0) expandedNames.push(equiv[q])
+        }
+      }
+    }
+
     var missingTools = []
     for (var j = 0; j < required.length; j++) {
-      if (calledNames.indexOf(required[j]) < 0) {
+      if (expandedNames.indexOf(required[j]) < 0) {
         missingTools.push(required[j])
       }
     }
@@ -657,7 +687,7 @@ function routeByIntentEdge(state) {
   var intent = state.playerIntent || 'narrative'
   if (intent === 'combat') return 'combat'
   if (intent === 'san_encounter') return 'sanity'
-  if (intent === 'investigate' || intent === 'explore' || intent === 'talk_npc' || intent === 'move' || intent === 'tool_continuation') return 'narrative'
+  if (intent === 'investigate' || intent === 'explore' || intent === 'talk_npc' || intent === 'move' || intent === 'tool_continuation' || intent === 'narrative') return 'narrative'
   if (intent === 'use_item') return 'resource'
   return 'generic'
 }

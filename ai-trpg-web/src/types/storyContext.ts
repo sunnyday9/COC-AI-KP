@@ -7,6 +7,10 @@ export interface StoryContextSanity {
   currentSan?: number
   dailySanLoss?: number
   potentialLoss?: number
+  /** If true, this turn should force a SAN check even under narrative intent. */
+  autoCheck?: boolean
+  /** Optional: brief reason for autoCheck (for tracing / prompt). */
+  autoReason?: string
 }
 
 export interface StoryContextNPC {
@@ -22,4 +26,6 @@ export interface StoryContext {
   openClues?: string[]
   activeNPCs?: StoryContextNPC[]
   sanity?: StoryContextSanity
+  /** If true, narrative agent should force a scene transition (anti-stall). */
+  forceTransitionScene?: boolean
 }

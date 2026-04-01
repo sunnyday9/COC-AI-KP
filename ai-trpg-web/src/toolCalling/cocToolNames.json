@@ -5,6 +5,7 @@
   "apply_major_wound",
   "first_aid",
   "grant_clue",
+  "end_game",
   "medicine",
   "melee_attack",
   "opposed_check",

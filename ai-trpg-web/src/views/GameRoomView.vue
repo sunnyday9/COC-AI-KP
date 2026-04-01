@@ -1,17 +1,21 @@
 <script setup lang="ts">
-import { ref, watch, nextTick, onMounted } from 'vue'
+import { ref, watch, nextTick, onMounted, onUnmounted, computed } from 'vue'
 import { useRouter } from 'vue-router'
 import { storeToRefs } from 'pinia'
 import { useGameStore } from '../stores/gameStore'
 import ChatMessage from '../components/game/ChatMessage.vue'
 import PlayerStatsBar from '../components/game/PlayerStatsBar.vue'
+import DebugPanel from '../components/game/DebugPanel.vue'
 
+const isDev = import.meta.env.DEV
 const router = useRouter()
 const gameStore = useGameStore()
 const { messages, isSending, storyId, storyName, playerName, gamePhase, characterSheet, currentScene, cluesObtained } = storeToRefs(gameStore)
+const isEnded = computed(() => gamePhase.value === 'ended')
 const inputText = ref('')
 const messagesEnd = ref<HTMLElement | null>(null)
 const cluesPanelOpen = ref(false)
+const debugPanelOpen = ref(isDev)
 const saveModalOpen = ref(false)
 const loadModalOpen = ref(false)
 const saveNameInput = ref('')
@@ -30,8 +34,12 @@ function scrollToBottom() {
 watch(messages, () => scrollToBottom(), { deep: true })
 
 onMounted(async () => {
-  if (!storyId.value || gamePhase.value !== 'playing' || !characterSheet.value) {
+  if (!storyId.value || (gamePhase.value !== 'playing' && gamePhase.value !== 'ended') || !characterSheet.value) {
     router.replace('/')
+    return
+  }
+  if (gamePhase.value === 'ended') {
+    router.replace('/game-end')
     return
   }
   if (messages.value.length === 0) {
@@ -40,9 +48,13 @@ onMounted(async () => {
   scrollToBottom()
 })
 
+watch(gamePhase, (p) => {
+  if (p === 'ended') router.replace('/game-end')
+})
+
 async function handleSend() {
   const text = inputText.value.trim()
-  if (!text || isSending.value) return
+  if (!text || isSending.value || isEnded.value) return
   inputText.value = ''
   await gameStore.sendPlayerMessage(text)
 }
@@ -98,6 +110,15 @@ async function confirmLoad(saveId: string) {
     loadLoading.value = false
   }
 }
+
+function handleGlobalKeydown(e: KeyboardEvent) {
+  if (e.ctrlKey && e.shiftKey && e.key === 'D') {
+    e.preventDefault()
+    debugPanelOpen.value = !debugPanelOpen.value
+  }
+}
+onMounted(() => document.addEventListener('keydown', handleGlobalKeydown))
+onUnmounted(() => document.removeEventListener('keydown', handleGlobalKeydown))
 </script>
 
 <template>
@@ -134,6 +155,17 @@ async function confirmLoad(saveId: string) {
                        hover:bg-cthulhu-800/50 transition-all duration-200">
           &#x1F4C4; 读档
         </button>
+        <!-- Debug toggle (dev only) -->
+        <button v-if="isDev"
+                type="button"
+                @click="debugPanelOpen = !debugPanelOpen"
+                :class="['flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium transition-all duration-200',
+                  debugPanelOpen
+                    ? 'bg-amber-600/20 border border-amber-500/40 text-amber-300'
+                    : 'bg-gray-800/40 border border-gray-700/30 text-gray-500 hover:text-gray-300']"
+                title="Toggle Debug Panel (Ctrl+Shift+D)">
+          <span class="font-mono text-[10px]">DBG</span>
+        </button>
         <!-- Clues toggle -->
         <button v-if="cluesObtained.length > 0"
                 type="button"
@@ -168,15 +200,15 @@ async function confirmLoad(saveId: string) {
           <textarea
             v-model="inputText"
             @keydown="handleKeydown"
-            placeholder="描述你的行动..."
+            :placeholder="isEnded ? '游戏已结束，请前往结局总结' : '描述你的行动...'"
             rows="2"
-            :disabled="isSending"
+            :disabled="isSending || isEnded"
             class="gothic-input resize-none text-sm leading-relaxed min-h-[2.5rem]"
           />
           <button
             type="button"
             @click="handleSend"
-            :disabled="!inputText.trim() || isSending"
+            :disabled="!inputText.trim() || isSending || isEnded"
             class="gothic-btn shrink-0 px-5 py-2 self-end"
           >
             <span v-if="isSending" class="inline-block w-4 h-4 border-2 border-parchment-400
@@ -204,6 +236,14 @@ async function confirmLoad(saveId: string) {
             {{ clue }}
           </div>
         </div>
+      </aside>
+    </transition>
+
+    <!-- Debug panel (right side, dev only) -->
+    <transition name="slide-panel">
+      <aside v-if="debugPanelOpen && isDev"
+             class="w-[420px] border-l border-gray-800 shrink-0 flex flex-col min-h-0">
+        <DebugPanel />
       </aside>
     </transition>
 

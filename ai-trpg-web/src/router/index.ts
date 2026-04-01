@@ -17,6 +17,7 @@ const routes: RouteRecordRaw[] = [
       { path: 'occupation', name: 'occupation', component: () => import('../views/OccupationSelectView.vue'), meta: { title: '选择职业' } },
       { path: 'character-create', name: 'character-create', component: () => import('../views/CharacterCreateView.vue'), meta: { title: '创建角色' } },
       { path: 'game', name: 'game', component: () => import('../views/GameRoomView.vue'), meta: { title: '游戏房间', requiresGame: true } },
+      { path: 'game-end', name: 'game-end', component: () => import('../views/GameEndView.vue'), meta: { title: '结局总结', requiresGame: true } },
       { path: 'settings', name: 'settings', component: () => import('../views/SettingsView.vue'), meta: { title: '设置' } },
       ...devRoutes,
     ],
@@ -31,9 +32,10 @@ const router = createRouter({
 })
 
 router.beforeEach((to) => {
-  if (to.meta.requiresGame && to.name === 'game') {
+  if (to.meta.requiresGame && (to.name === 'game' || to.name === 'game-end')) {
     const gameStore = useGameStore()
-    if (gameStore.gamePhase !== 'playing' || !gameStore.characterSheet) {
+    const okPhase = gameStore.gamePhase === 'playing' || gameStore.gamePhase === 'ended'
+    if (!okPhase || !gameStore.characterSheet) {
       return { path: '/', replace: true }
     }
   }

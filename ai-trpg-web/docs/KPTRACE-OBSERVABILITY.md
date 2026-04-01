@@ -1,7 +1,7 @@
 # KPTrace 可观测性系统 — 设计与实现报告
 
 > **日期**：2026-03-31  
-> **状态**：Sprint 1 完成（事件总线 + 结构化追踪 + 全链路插桩） + RAG Inspector 完成
+> **状态**：Sprint 1 完成（事件总线 + 结构化追踪 + 全链路插桩） + RAG Inspector 完成 + Sprint 2 部分完成（Debug Panel UI 基础功能）
 
 ---
 
@@ -74,7 +74,21 @@ LangGraph 各节点将事件附加到 state 的 `_traceEvents` 数组，通过 `
 | `electron/agent/kpGraph.mjs` | 新增 `_traceEvents` state 字段；6 个节点各发射对应事件 |
 | `electron/ipc/kpAgentHandlers.cjs` | 提取并转发 `_traceEvents`；流式模式发送 `type:'trace'` |
 
-### 3.3 事件类型清单（28 种）
+### 3.4 Debug Panel UI（Sprint 2 新增）
+
+| 文件 | 职责 |
+|------|------|
+| `src/components/game/DebugPanel.vue` | 实时 Trace 查看器，含 Live / Traces / Export 三个 Tab |
+
+### 3.5 Debug Panel 集成修改（Sprint 2）
+
+| 文件 | 变更 |
+|------|------|
+| `src/views/GameRoomView.vue` | 集成 DebugPanel 为可折叠右侧面板（420px），添加 DBG 切换按钮及 `Ctrl+Shift+D` 快捷键 |
+| `src/views/SettingsView.vue` | 新增"开发调试"区域（仅 dev 模式可见），包含 debugMode 开关 |
+| `src/App.vue` | 启动时根据 `debugMode` 或 `import.meta.env.DEV` 自动启用 tracing |
+
+### 3.6 事件类型清单（28 种）
 
 | Span | 事件类型 | 来源 |
 |------|----------|------|
@@ -148,6 +162,24 @@ const unsub = traceBus.subscribe((event) => {
 unsub()
 ```
 
+### 4.4 使用 Debug Panel
+
+在游戏房间中打开 Debug Panel：
+
+- **按钮**：点击顶部工具栏的 **DBG** 按钮
+- **快捷键**：`Ctrl+Shift+D` 切换显示/隐藏
+- **自动打开**：开发模式（`import.meta.env.DEV`）下自动展开
+
+面板包含三个 Tab：
+
+| Tab | 功能 |
+|-----|------|
+| **Live** | 实时事件流，显示当前 Trace 的所有事件 |
+| **Traces** | 已完成的 Trace 历史，按 Span 分组并显示耗时 |
+| **Export** | 将所有 Trace 数据导出为 JSON 文件下载 |
+
+在设置页面（Settings）→ "开发调试"区域（仅 dev 模式可见）可通过 checkbox 持久化开启/关闭 debugMode。
+
 ---
 
 ## 5. 测试验证
@@ -160,13 +192,20 @@ unsub()
 
 ## 6. 后续 Sprint 规划
 
-### Sprint 2：Debug Panel UI
+### Sprint 2：Debug Panel UI（进行中）
 
-- 在 GameRoomView 中添加可折叠的 Debug Panel
-- 按 Trace/Span/Event 三级展示
-- 实时高亮当前 Span
-- 角色快照前后对比（diff 视图）
-- 长期摘要全文展示
+**已完成：**
+- ✅ `DebugPanel.vue` 组件：Live（实时事件流）/ Traces（按 Span 分组 + 耗时）/ Export（JSON 下载）三 Tab
+- ✅ 集成到 `GameRoomView.vue`，可折叠右侧面板（420px）
+- ✅ 顶部工具栏 **DBG** 切换按钮 + `Ctrl+Shift+D` 快捷键
+- ✅ 开发模式下自动展开
+- ✅ 设置页"开发调试"区域（dev-only），debugMode checkbox
+- ✅ `App.vue` 启动时自动启用 tracing（debugMode 或 DEV 模式）
+
+**待完成：**
+- ⬜ 实时高亮当前 Span
+- ⬜ 角色快照前后对比（diff 视图）
+- ⬜ 长期摘要全文展示
 
 ### Sprint 3：自动化质量检测 Harness
 
@@ -196,9 +235,12 @@ src/services/tracing/
 src/stores/
 ├── debugStore.ts    # Debug 状态管理
 └── settingsStore.ts # (修改) debugMode 字段
+
+src/components/game/
+└── DebugPanel.vue   # 实时 Trace 查看器（Live/Traces/Export）
 ```
 
-已修改文件：`gameStore.ts`, `kpSessionService.ts`, `ragService.ts`, `orchestrator.ts`, `kpGraph.mjs`, `kpAgentHandlers.cjs`
+已修改文件：`gameStore.ts`, `kpSessionService.ts`, `ragService.ts`, `orchestrator.ts`, `kpGraph.mjs`, `kpAgentHandlers.cjs`, `GameRoomView.vue`, `SettingsView.vue`, `App.vue`
 
 ---
 

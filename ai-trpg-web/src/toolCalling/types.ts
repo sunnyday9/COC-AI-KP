@@ -111,6 +111,15 @@ export interface ToolHandlerContext {
   /** Session / world. */
   transitionToScene: (sceneName: string) => void
   addClue: (description: string) => void
+  /** End game and enter ending UI. */
+  endGame: (ending: {
+    outcome: string
+    title: string
+    summary: string
+    epilogueOptions?: string[]
+    keyFacts?: string[]
+    keyTurnIds?: string[]
+  }) => void
   /** UI: generate unique id for messages. */
   generateId: () => string
 }

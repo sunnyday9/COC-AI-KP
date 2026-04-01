@@ -2,7 +2,7 @@ import type { Message } from '../types/game'
 import type { COCCharacterSheet } from '../types/character'
 import { getSkillName } from '../data/coc7'
 
-const MAX_MEMORY_ENTRIES = 12
+const MAX_MEMORY_ENTRIES = 30
 const RECENT_TURNS_COUNT = 5
 const RECENT_TURN_ENTRY_LEN = 120
 const CONVERSATION_WINDOW = 18

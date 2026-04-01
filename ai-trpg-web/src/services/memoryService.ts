@@ -7,9 +7,9 @@ import { chat } from './ai'
 
 const SUMMARIZE_SYSTEM = `你是一个 COC 跑团长期记忆整理助手。根据「近期对话」与「当前长期摘要」，输出一段简洁的合并后的长期摘要（中文）。
 要求：
-- 保留场景、地点、重要 NPC、已获得的线索、关键决定与事件。
+- 必须包含：所有已获得的线索名称、所有到过的场景、关键NPC及其态度变化、战斗/伤亡记录、角色当前持有的重要物品。
 - 若提供「当前故事上下文」，它是当前局面/状态的权威描述，可用于校正对话中的歧义或遗漏（例如当前场景、SAN 状态、已获得线索等）。
-- 用第三人称简述，控制在 300 字以内。
+- 用第三人称简述，控制在 500 字以内。
 - 只输出合并后的摘要正文，不要加标题或解释。`
 
 export interface SummarizePayload {
@@ -52,7 +52,7 @@ export async function summarizeLongTerm(
         { role: 'user', content: userContent },
       ],
       stream: false,
-      maxTokens: 512,
+      maxTokens: 768,
     })
     const content = result && typeof result === 'object' && 'content' in result ? (result as { content?: string }).content : ''
     return (content ?? '').trim() || currentSummary

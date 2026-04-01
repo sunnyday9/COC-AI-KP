@@ -25,6 +25,7 @@ export interface ToolContextDeps {
   setCharacterDying(isDying: boolean): void
   transitionToScene(sceneName: string): void
   addClue(description: string): void
+  endGame(ending: { outcome: string; title: string; summary: string; epilogueOptions?: string[]; keyFacts?: string[]; keyTurnIds?: string[] }): void
   generateId(): string
 }
 
@@ -102,6 +103,7 @@ export function buildToolContext(deps: ToolContextDeps): ToolHandlerContext {
     setCharacterDying: deps.setCharacterDying,
     transitionToScene: deps.transitionToScene,
     addClue: deps.addClue,
+    endGame: deps.endGame,
     generateId: deps.generateId,
   }
 }

@@ -200,6 +200,25 @@ const COC_KP_TOOLS = [
   {
     type: 'function',
     function: {
+      name: 'end_game',
+      description: 'End the scenario and transition the UI to an ending summary screen. Call when the story reaches a clear conclusion (victory/defeat/partial). Must provide a concise but complete ending summary and outcome.',
+      parameters: {
+        type: 'object',
+        properties: {
+          outcome: { type: 'string', enum: ['victory', 'defeat', 'partial', 'survival', 'unknown'], description: 'Ending outcome type' },
+          title: { type: 'string', description: 'Ending title' },
+          summary: { type: 'string', description: 'Ending summary (500-900 Chinese chars recommended)' },
+          epilogueOptions: { type: 'array', items: { type: 'string' }, description: 'Optional epilogue / follow-up options' },
+          keyFacts: { type: 'array', items: { type: 'string' }, description: 'Optional key facts / truths revealed' },
+          keyTurnIds: { type: 'array', items: { type: 'string' }, description: 'Optional key turn ids for replay' },
+        },
+        required: ['outcome', 'title', 'summary'],
+      },
+    },
+  },
+  {
+    type: 'function',
+    function: {
       name: 'trigger_insanity',
       description: 'After SAN loss (e.g. from san_check), evaluate insanity: permanent if SAN dropped to 0; indefinite if daily SAN loss >= 1/5 of current SAN; if single loss >= 5, INT check—success = temporary insanity (roll bout), failure = 压抑. For temporary/indefinite, 1D10 bout table: 9 = add phobia, 10 = add mania. Call after san_check when SAN was lost.',
       parameters: {
@@ -559,21 +578,40 @@ async function doAnthropic(config, messages, stream, temp, maxTokens, tools, onC
 
 function toGeminiTools(openaiTools) {
   if (!openaiTools?.length) return null
+
+  function toGeminiSchema(schema) {
+    const t = (schema?.type ?? 'string').toLowerCase()
+    const base = {
+      type: t === 'object' ? 'OBJECT' : t === 'array' ? 'ARRAY' : t === 'integer' ? 'INTEGER' : t === 'number' ? 'NUMBER' : t === 'boolean' ? 'BOOLEAN' : 'STRING',
+      description: schema?.description ?? '',
+    }
+
+    if (t === 'array') {
+      const itemSchema = schema?.items ?? { type: 'string' }
+      base.items = toGeminiSchema(itemSchema)
+      return base
+    }
+
+    if (t === 'object') {
+      const props = schema?.properties ?? {}
+      const required = schema?.required ?? []
+      const out = { ...base, properties: {}, required }
+      for (const [k, v] of Object.entries(props)) out.properties[k] = toGeminiSchema(v)
+      return out
+    }
+
+    if (Array.isArray(schema?.enum)) {
+      base.enum = schema.enum
+    }
+
+    return base
+  }
+
   const declarations = openaiTools.map((t) => {
     const fn = t.function
     if (!fn) return null
     const params = fn.parameters ?? { type: 'object', properties: {}, required: [] }
-    const geminiParams = {
-      type: 'OBJECT',
-      properties: {},
-      required: params.required ?? [],
-    }
-    for (const [k, v] of Object.entries(params.properties ?? {})) {
-      geminiParams.properties[k] = {
-        type: (v.type ?? 'string').toUpperCase(),
-        description: v.description ?? '',
-      }
-    }
+    const geminiParams = toGeminiSchema(params)
     return {
       name: fn.name,
       description: fn.description ?? '',
@@ -600,17 +638,16 @@ async function doGoogle(config, messages, stream, temp, maxTokens, tools, onChun
     if (m.role === 'assistant' && m.tool_calls?.length) {
       pendingToolNames = m.tool_calls.map((tc) => tc.function?.name ?? '')
       for (const tc of m.tool_calls) {
-        contents.push({
-          role: 'model',
-          parts: [{
-            functionCall: {
-              name: tc.function?.name ?? '',
-              args: typeof tc.function?.arguments === 'string'
-                ? (() => { try { return JSON.parse(tc.function.arguments) } catch (_e) { return {} } })()
-                : (tc.function?.arguments ?? {}),
-            },
-          }],
-        })
+        const partObj = {
+          functionCall: {
+            name: tc.function?.name ?? '',
+            args: typeof tc.function?.arguments === 'string'
+              ? (() => { try { return JSON.parse(tc.function.arguments) } catch (_e) { return {} } })()
+              : (tc.function?.arguments ?? {}),
+          },
+        }
+        if (tc._thoughtSignature) partObj.thoughtSignature = tc._thoughtSignature
+        contents.push({ role: 'model', parts: [partObj] })
       }
       if (m.content) {
         contents.push({ role: 'model', parts: [{ text: m.content }] })
@@ -693,11 +730,13 @@ async function doGoogle(config, messages, stream, temp, maxTokens, tools, onChun
             if (onChunk) onChunk(part.text)
           }
           if (part.functionCall) {
-            geminiToolCalls.push({
+            const tc = {
               id: `gemini_tc_${geminiToolCalls.length}`,
               name: part.functionCall.name ?? '',
               arguments: JSON.stringify(part.functionCall.args ?? {}),
-            })
+            }
+            if (part.thoughtSignature) tc._thoughtSignature = part.thoughtSignature
+            geminiToolCalls.push(tc)
           }
         }
       }
@@ -717,11 +756,13 @@ async function doGoogle(config, messages, stream, temp, maxTokens, tools, onChun
   for (const part of parts) {
     if (part.text) text += part.text
     if (part.functionCall) {
-      geminiToolCalls.push({
+      const tc = {
         id: `gemini_tc_${geminiToolCalls.length}`,
         name: part.functionCall.name ?? '',
         arguments: JSON.stringify(part.functionCall.args ?? {}),
-      })
+      }
+      if (part.thoughtSignature) tc._thoughtSignature = part.thoughtSignature
+      geminiToolCalls.push(tc)
     }
   }
   return {

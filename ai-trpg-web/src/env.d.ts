@@ -91,7 +91,7 @@ interface ElectronAPI {
   ragIndex: (params: RAGIndexParams) => Promise<{ ok: boolean; indexed: number }>
   ragDelete: (scriptId: string) => Promise<{ ok: boolean; deleted: number }>
   ragQuery: (params: RAGQueryParams) => Promise<{ chunks: { content: string; metadata: Record<string, string>; distance: number }[] }>
-  ragContext: (params: RAGContextParams) => Promise<{ context: string }>
+  ragContext: (params: RAGContextParams) => Promise<{ context: string; graphSummary?: string; chunkCount?: number }>
   ragListStories: () => Promise<IndexedStory[]>
   ragStoryOverview: (params: { storyId: string; topK?: number }) => Promise<{ overview: string; storyName: string }>
   ragGetIndex: (params: { scriptId: string }) => Promise<{

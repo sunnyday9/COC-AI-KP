@@ -1,6 +1,7 @@
 import { toRaw } from 'vue'
 import type { Message } from '../types/game'
 import type { GamePhase, COCCharacterSheet } from '../types/character'
+import type { EndingState } from '../types/ending'
 
 export const SAVE_VERSION = 1
 
@@ -23,6 +24,8 @@ export interface GameSaveSnapshot {
   selectedOccupationId: string | null
   selectedOccupationName: string
   sessionId: string | null
+  endingState?: EndingState | null
+  scenesVisited?: string[]
 }
 
 export async function writeSaveSnapshot(saveId: string, displayName: string | undefined, snapshot: Omit<GameSaveSnapshot, 'version' | 'name'>): Promise<void> {

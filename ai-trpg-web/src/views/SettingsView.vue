@@ -3,6 +3,8 @@ import { ref, computed, watch, onMounted } from 'vue'
 import { storeToRefs } from 'pinia'
 import { useSettingsStore } from '../stores/settingsStore'
 import { chat, isStreamResponse, consumeStream } from '../services/ai'
+
+const isDev = import.meta.env.DEV
 import { getModelOptions } from '../services/ai/modelListService'
 import { useToast } from '../composables/useToast'
 import {
@@ -343,6 +345,33 @@ async function handleTest() {
             <label class="block text-xs font-medium text-gray-400 mb-1.5">同步服务 URL</label>
             <input v-model="settings.syncServerUrl" type="text" placeholder="http://localhost:3000"
                    class="gothic-input text-sm" />
+          </div>
+          <button type="button" @click="handleSave" class="gothic-btn text-sm">保存</button>
+        </div>
+      </section>
+
+      <!-- Section: Debug (dev only) -->
+      <section v-if="isDev" class="gothic-card overflow-hidden">
+        <div class="px-5 py-3.5">
+          <h2 class="gothic-heading text-sm font-semibold flex items-center gap-2">
+            <span class="text-amber-400">&#x1F50D;</span> 开发调试
+            <span class="text-[10px] text-amber-500 bg-amber-500/10 px-1.5 py-0.5 rounded ml-2">DEV ONLY</span>
+          </h2>
+        </div>
+        <div class="px-5 pb-5 space-y-3 border-t border-gray-800/60 pt-4">
+          <label class="flex items-center gap-3 cursor-pointer">
+            <input v-model="settings.debugMode" type="checkbox"
+                   class="w-4 h-4 rounded bg-gray-800 border-gray-600 text-amber-500 focus:ring-amber-500" />
+            <div>
+              <span class="text-sm text-gray-300">启用 KPTrace 追踪</span>
+              <p class="text-[11px] text-gray-600 mt-0.5">记录 Agent 循环、RAG 检索、工具执行等全链路事件</p>
+            </div>
+          </label>
+          <div class="flex items-center gap-3 text-xs text-gray-500">
+            <span>快捷键：在游戏房间按 <kbd class="px-1 py-0.5 bg-gray-800 rounded border border-gray-700 text-gray-400">Ctrl+Shift+D</kbd> 打开/关闭 Debug Panel</span>
+          </div>
+          <div class="flex items-center gap-3 text-xs text-gray-500">
+            <span>RAG Inspector：访问 <code class="px-1 py-0.5 bg-gray-800 rounded border border-gray-700 text-gray-400">/rag-inspector</code> 检查 RAG 索引和 GraphRAG 提取结果</span>
           </div>
           <button type="button" @click="handleSave" class="gothic-btn text-sm">保存</button>
         </div>

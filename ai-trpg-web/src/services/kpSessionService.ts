@@ -132,6 +132,7 @@ export async function runKpAgentLoop(
           id: t.id,
           type: 'function' as const,
           function: { name: t.name, arguments: t.arguments },
+          ...((t as Record<string, unknown>)._thoughtSignature ? { _thoughtSignature: (t as Record<string, unknown>)._thoughtSignature } : {}),
         })),
       },
       ...toolResults,

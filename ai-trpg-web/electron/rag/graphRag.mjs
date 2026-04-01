@@ -101,7 +101,7 @@ export async function buildContextWithGraph(params) {
     getEmbedding,
   })
   const vecChunks = vecResult.chunks || []
-  if (!vecChunks.length) return { context: '' }
+  if (!vecChunks.length) return { context: '', chunkCount: 0 }
 
   const graph = graphStore.getGraph(scriptId)
   const useGraph = useGraphRAG && graph?.nodes?.length > 0
@@ -113,7 +113,7 @@ export async function buildContextWithGraph(params) {
   }
 
   const allChunks = vectorStore.getChunksByIds(scriptId, chunkIds)
-  if (!allChunks.length) return { context: '' }
+  if (!allChunks.length) return { context: '', chunkCount: 0 }
 
   let context
   let graphSummary
@@ -133,5 +133,5 @@ export async function buildContextWithGraph(params) {
     context = lines.join('\n')
   }
 
-  return { context, graphSummary: graphSummary || undefined }
+  return { context, graphSummary: graphSummary || undefined, chunkCount: allChunks.length }
 }

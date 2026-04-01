@@ -23,7 +23,7 @@ type ElectronRagAPI = {
   ragIndex: (params: { scriptId: string; chunks: { id: string; content: string; type: string; metadata: Record<string, unknown> }[]; storyMeta?: { name?: string } }) => Promise<{ ok: boolean; indexed: number }>
   ragDelete: (scriptId: string) => Promise<{ ok: boolean; deleted: number }>
   ragQuery: (params: { query: string; scriptId?: string; sceneId?: string; type?: string; topK?: number }) => Promise<{ chunks: RAGChunkResult[] }>
-  ragContext: (params: { query: string; scriptId?: string; sceneId?: string; topK?: number }) => Promise<{ context: string; graphSummary?: string }>
+  ragContext: (params: { query: string; scriptId?: string; sceneId?: string; topK?: number }) => Promise<{ context: string; graphSummary?: string; chunkCount?: number }>
   ragListStories: () => Promise<IndexedStory[]>
   ragStoryOverview: (params: { storyId: string; topK?: number }) => Promise<{ overview: string; storyName: string }>
   ragUserGraphAdd?: (params: { storyId: string; sessionId: string; event: { type: string; name: string; description?: string } }) => Promise<void>
@@ -113,7 +113,7 @@ export async function getContext(params: {
   scriptId?: string
   sceneId?: string
   topK?: number
-}): Promise<{ context: string; graphSummary?: string }> {
+}): Promise<{ context: string; graphSummary?: string; chunkCount?: number }> {
   const api = getApi()
   if (!api?.ragContext) return { context: '' }
   traceBus.emit('rag_retrieval', 'rag_query_sent', {
@@ -128,10 +128,9 @@ export async function getContext(params: {
     topK: params.topK ?? 5,
   })
   traceBus.emit('rag_retrieval', 'rag_context_received', {
-    chunkCount: 0,
+    chunkCount: result?.chunkCount ?? 0,
     contextLength: result?.context?.length ?? 0,
     hasGraphSummary: !!(result?.graphSummary),
-    hasUserGraph: false,
   })
   return result
 }
