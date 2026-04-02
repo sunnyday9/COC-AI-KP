@@ -25,6 +25,14 @@ const modelListLoading = ref(false)
 const modelListError = ref('')
 const customModel = ref('')
 
+const embeddingModelList = ref<{ value: string; label: string }[]>([])
+const embeddingModelListLoading = ref(false)
+const embeddingModelListError = ref('')
+const embeddingCustomModel = ref('')
+
+const embeddingTestStatus = ref<'idle' | 'loading' | 'ok' | 'error'>('idle')
+const embeddingTestError = ref('')
+
 const currentDef = computed(() => getProviderDef(settings.value.ai.provider))
 
 const isPreset = computed(() =>
@@ -49,6 +57,15 @@ const apiKeyPlaceholder = computed(() => currentDef.value?.apiKeyPlaceholder ?? 
 const displayModelList = computed(() => {
   const list = modelList.value
   const current = settings.value.ai.model
+  if (current && !list.some((m) => m.value === current)) {
+    return [...list, { value: current, label: `${current} (当前)` }]
+  }
+  return list
+})
+
+const displayEmbeddingModelList = computed(() => {
+  const list = embeddingModelList.value
+  const current = settings.value.rag?.model
   if (current && !list.some((m) => m.value === current)) {
     return [...list, { value: current, label: `${current} (当前)` }]
   }
@@ -81,6 +98,29 @@ async function loadModelList() {
   }
 }
 
+async function loadEmbeddingModelList() {
+  if (settings.value.rag?.provider !== 'api') return
+  embeddingModelListLoading.value = true
+  embeddingModelListError.value = ''
+  try {
+    const opts = await getModelOptions(settings.value.ai.provider, {
+      apiKey: settings.value.ai.apiKey,
+      baseUrl: settings.value.ai.baseUrl,
+    }, 'embeddings')
+    embeddingModelList.value = opts
+
+    const current = settings.value.rag?.model
+    if ((!current || !current.trim()) && opts[0]) {
+      settings.value.rag.model = opts[0].value
+    }
+  } catch (e) {
+    embeddingModelListError.value = e instanceof Error ? e.message : '获取嵌入模型列表失败'
+    embeddingModelList.value = []
+  } finally {
+    embeddingModelListLoading.value = false
+  }
+}
+
 function selectProvider(id: AIProviderType) {
   if (settings.value.ai.provider === id) return
   settings.value.ai.provider = id
@@ -97,15 +137,24 @@ function applyCustomModel() {
   }
 }
 
+function applyCustomEmbeddingModel() {
+  if (embeddingCustomModel.value.trim() && settings.value.rag) {
+    settings.value.rag.model = embeddingCustomModel.value.trim()
+    embeddingCustomModel.value = ''
+  }
+}
+
 watch(
   () => settings.value.ai.provider,
   () => {
     loadModelList()
+    if (settings.value.rag?.provider === 'api') loadEmbeddingModelList()
   }
 )
 
 onMounted(() => {
   loadModelList()
+  if (settings.value.rag?.provider === 'api') loadEmbeddingModelList()
 })
 
 async function handleSave() {
@@ -133,6 +182,23 @@ async function handleTest() {
     testStatus.value = 'error'
     testError.value = e instanceof Error ? e.message : String(e)
     toast.error(`连接失败：${testError.value}`)
+  }
+}
+
+async function handleTestEmbedding() {
+  embeddingTestStatus.value = 'loading'
+  embeddingTestError.value = ''
+  try {
+    const result = await window.electronAPI?.ragTestEmbedding?.()
+    if (!result?.ok) throw new Error(result?.error || 'Unknown error')
+    embeddingTestStatus.value = 'ok'
+    const len = typeof result.vectorLength === 'number' ? result.vectorLength : 0
+    if (len > 0) toast.success(`嵌入连接正常（vector=${len}）`)
+    else toast.success('嵌入连接正常')
+  } catch (e) {
+    embeddingTestStatus.value = 'error'
+    embeddingTestError.value = e instanceof Error ? e.message : String(e)
+    toast.error(`嵌入连接失败：${embeddingTestError.value}`)
   }
 }
 </script>
@@ -335,9 +401,68 @@ async function handleTest() {
                 </label>
               </div>
               <div v-if="settings.rag.provider === 'api'">
-                <label class="block text-xs font-medium text-gray-400 mb-1.5">嵌入模型名</label>
-                <input v-model="settings.rag.model" type="text" placeholder="text-embedding-3-small"
-                       class="gothic-input text-sm" />
+                <div class="flex items-center justify-between gap-3">
+                  <label class="block text-xs font-medium text-gray-400 mb-1.5">嵌入模型名</label>
+                  <button
+                    type="button"
+                    @click="loadEmbeddingModelList"
+                    :disabled="embeddingModelListLoading"
+                    class="text-[11px] text-eldritch-400 hover:text-eldritch-300 disabled:opacity-50"
+                  >
+                    刷新
+                  </button>
+                </div>
+
+                <div class="mt-2 flex items-center gap-3">
+                  <button
+                    type="button"
+                    @click="handleTestEmbedding"
+                    :disabled="embeddingTestStatus === 'loading' || settings.rag.provider !== 'api'"
+                    class="gothic-btn-secondary text-xs"
+                  >
+                    {{ embeddingTestStatus === 'loading' ? '测试中...' : '测试嵌入连接' }}
+                  </button>
+                  <span v-if="embeddingTestStatus === 'ok'" class="text-xs text-cthulhu-200">✓ 嵌入正常</span>
+                  <span v-if="embeddingTestStatus === 'error'" class="text-xs text-blood-300">✕ {{ embeddingTestError }}</span>
+                </div>
+
+                <div v-if="embeddingModelListLoading && displayEmbeddingModelList.length === 0" class="text-xs text-gray-500 mt-1">
+                  加载中...
+                </div>
+
+                <div v-else class="space-y-2">
+                  <select
+                    v-if="displayEmbeddingModelList.length > 0"
+                    v-model="settings.rag.model"
+                    class="gothic-select text-sm disabled:opacity-50"
+                  >
+                    <option v-for="opt in displayEmbeddingModelList" :key="opt.value" :value="opt.value">
+                      {{ opt.label }}
+                    </option>
+                  </select>
+
+                  <div class="mt-1 flex items-center gap-2">
+                    <input
+                      v-model="embeddingCustomModel"
+                      type="text"
+                      placeholder="或手动输入模型名"
+                      class="gothic-input text-sm flex-1"
+                      @keydown.enter="applyCustomEmbeddingModel"
+                    />
+                    <button
+                      type="button"
+                      @click="applyCustomEmbeddingModel"
+                      :disabled="!embeddingCustomModel.trim()"
+                      class="gothic-btn-secondary text-xs px-3 py-1.5 disabled:opacity-40"
+                    >
+                      应用
+                    </button>
+                  </div>
+
+                  <p v-if="embeddingModelListError" class="text-[11px] text-amber-400">
+                    {{ embeddingModelListError }}
+                  </p>
+                </div>
               </div>
             </div>
           </div>

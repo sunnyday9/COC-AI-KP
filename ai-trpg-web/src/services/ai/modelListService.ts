@@ -12,11 +12,12 @@ interface FetchContext {
 
 export async function getModelOptions(
   provider: string,
-  context: FetchContext
+  context: FetchContext,
+  purpose: 'chat' | 'embeddings' = 'chat',
 ): Promise<ModelOption[]> {
   const api = window.electronAPI
   if (api?.aiListModels) {
-    return await api.aiListModels({ provider, baseUrl: context.baseUrl, apiKey: context.apiKey })
+    return await api.aiListModels({ provider, baseUrl: context.baseUrl, apiKey: context.apiKey, purpose })
   }
 
   // Fallback for non-Electron environments
@@ -35,7 +36,12 @@ export async function getModelOptions(
         const res = await fetch(modelsUrl, { headers })
         if (!res.ok) return []
         const data = (await res.json()) as { data?: { id: string }[] }
-        return (data.data ?? []).filter((m) => m.id).map((m) => ({ value: m.id, label: m.id })).slice(0, 100)
+        let models = (data.data ?? []).filter((m) => m.id).map((m) => ({ value: m.id, label: m.id }))
+        if (purpose === 'embeddings') {
+          const filtered = models.filter((m) => /(embedding|embed)/i.test(m.value))
+          if (filtered.length) models = filtered
+        }
+        return models.slice(0, 100)
       } catch {
         return []
       }
@@ -60,12 +66,23 @@ export async function getModelOptions(
         const data = (await res.json()) as {
           models?: { name: string; displayName?: string; supportedGenerationMethods?: string[] }[]
         }
-        return (data.models ?? [])
-          .filter((m) => m.name && (m.supportedGenerationMethods || []).includes('generateContent'))
-          .map((m) => {
-            const id = (m.name ?? '').replace('models/', '') || (m.name ?? '')
-            return { value: id, label: m.displayName || id }
-          })
+        const models = data.models ?? []
+        const filtered =
+          purpose === 'embeddings'
+            ? models.filter((m) => {
+                const methods = m.supportedGenerationMethods || []
+                return m.name && (methods.includes('embedContent') || methods.includes('embedText') || methods.includes('embedding'))
+              })
+            : models.filter((m) => m.name && (m.supportedGenerationMethods || []).includes('generateContent'))
+
+        const finalList = filtered.length ? filtered : (purpose === 'embeddings'
+          ? models.filter((m) => m.name && (m.supportedGenerationMethods || []).includes('generateContent'))
+          : filtered)
+
+        return finalList.map((m) => {
+          const id = (m.name ?? '').replace('models/', '') || (m.name ?? '')
+          return { value: id, label: m.displayName || id }
+        })
       } catch {
         return []
       }

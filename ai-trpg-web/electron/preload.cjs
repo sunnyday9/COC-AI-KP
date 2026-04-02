@@ -41,6 +41,8 @@ contextBridge.exposeInMainWorld('electronAPI', {
 
   // RAG (integrated vector store — no separate service needed)
   ragHealth: () => ipcRenderer.invoke('rag:health'),
+  ragTestEmbedding: () => ipcRenderer.invoke('rag:testEmbedding'),
+  ragTestGraphRagExtract: (params) => ipcRenderer.invoke('rag:testGraphRagExtract', params),
   ragIndex: (params) => ipcRenderer.invoke('rag:index', params),
   ragDelete: (scriptId) => ipcRenderer.invoke('rag:delete', scriptId),
   ragQuery: (params) => ipcRenderer.invoke('rag:query', params),

@@ -62,6 +62,131 @@ function registerRAGHandlers() {
     }
   })
 
+  ipcMain.handle('rag:testEmbedding', async () => {
+    try {
+      const embed = await buildGetEmbedding()
+      if (!embed) return { ok: false, error: 'No embedding provider available' }
+      const vec = await embed('test embedding connection')
+      const vectorLength = Array.isArray(vec) ? vec.length : 0
+      return { ok: true, vectorLength }
+    } catch (e) {
+      return { ok: false, error: e instanceof Error ? e.message : String(e) }
+    }
+  })
+
+  ipcMain.handle('rag:testGraphRagExtract', async (_, params) => {
+    const { scriptId, maxChunks = 6, maxBatches = 3 } = params || {}
+    if (!scriptId) return { ok: false, error: 'Missing scriptId' }
+
+    const settings = await readSettings()
+    const ragSettings = settings?.rag || {}
+    const extractionModel = ragSettings.extractionModel || settings?.ai?.model || undefined
+
+    const { app: elApp } = require('electron')
+    const fs = require('fs')
+
+    const idxPath = path.join(
+      elApp.getPath('userData'),
+      'rag_index',
+      scriptId.replace(/[^a-zA-Z0-9_\-\u4e00-\u9fff]/g, '_') + '.json',
+    )
+
+    if (!fs.existsSync(idxPath)) {
+      return { ok: false, error: 'rag_index not found for this scriptId' }
+    }
+
+    const raw = JSON.parse(fs.readFileSync(idxPath, 'utf-8'))
+    const docs = raw?.docs || []
+
+    const sliceN = Math.max(0, Number.isFinite(Number(maxChunks)) ? Number(maxChunks) : 6)
+    const limited = docs.slice(0, sliceN)
+
+    if (!limited.length) {
+      return { ok: true, scriptId, extractionModelUsed: extractionModel || settings?.ai?.model, totalBatches: 0, results: [] }
+    }
+
+    const { buildExtractGraphPrompt, parseExtractOutput, COC_ENTITY_TYPES } = await import(
+      pathToFileURL(path.join(__dirname, '..', 'rag', 'prompts', 'cocExtractGraph.js')).href
+    )
+
+    const MAX_CHARS_PER_CALL = 2500
+    const BATCH_SIZE = 3
+
+    const batches = []
+    let acc = []
+    let accLen = 0
+    for (const c of limited) {
+      const text = (c?.content || '').trim()
+      if (!text) continue
+      if (accLen + text.length > MAX_CHARS_PER_CALL && acc.length > 0) {
+        batches.push(acc)
+        acc = []
+        accLen = 0
+      }
+      acc.push({ id: c.id, content: c.content, type: c.type, metadata: c.metadata })
+      accLen += text.length
+      if (acc.length >= BATCH_SIZE) {
+        batches.push(acc)
+        acc = []
+        accLen = 0
+      }
+    }
+    if (acc.length) batches.push(acc)
+
+    const tested = Math.min(batches.length, Math.max(0, Number(maxBatches) || 0))
+    const results = []
+
+    for (let bi = 0; bi < tested; bi++) {
+      const batch = batches[bi]
+      const chunkIds = batch.map((c) => c.id)
+      const combined = batch.map((c) => c.content).join('\n\n---\n\n')
+
+      const prompt = buildExtractGraphPrompt({ inputText: combined, entityTypes: COC_ENTITY_TYPES })
+      try {
+        const res = await invokeChat({
+          messages: [
+            { role: 'system', content: 'Output only the extracted entities and relationships. No other text.' },
+            { role: 'user', content: prompt },
+          ],
+          stream: false,
+          temperature: 0,
+          maxTokens: 2048,
+          model: extractionModel || undefined,
+        })
+
+        const rawOutput = (res?.content || '').trim()
+        const parsed = parseExtractOutput(rawOutput)
+        results.push({
+          batchIndex: bi,
+          chunkIds,
+          extractionModelUsed: extractionModel || settings?.ai?.model || null,
+          rawOutputPreview: rawOutput.slice(0, 900),
+          hasTupleDelimiter: rawOutput.includes(' | '),
+          entitiesCount: parsed.entities?.length ?? 0,
+          relationsCount: parsed.relations?.length ?? 0,
+          entitiesSample: (parsed.entities || []).slice(0, 10).map((e) => ({ name: e.name, type: e.type })),
+          relationsSample: (parsed.relations || []).slice(0, 10).map((r) => ({ source: r.source, target: r.target, type: r.type })),
+        })
+      } catch (e) {
+        results.push({
+          batchIndex: bi,
+          chunkIds,
+          extractionModelUsed: extractionModel || settings?.ai?.model || null,
+          error: e instanceof Error ? e.message : String(e),
+        })
+      }
+    }
+
+    return {
+      ok: true,
+      scriptId,
+      extractionModelUsed: extractionModel || settings?.ai?.model || null,
+      totalBatches: batches.length,
+      testedBatches: tested,
+      results,
+    }
+  })
+
   ipcMain.handle('rag:index', async (_, params) => {
     const { scriptId, chunks, storyMeta } = params || {}
     if (!scriptId || !Array.isArray(chunks)) {

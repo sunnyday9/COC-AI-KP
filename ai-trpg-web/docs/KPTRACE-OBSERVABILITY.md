@@ -268,18 +268,34 @@ RagInspectorView.vue
 
 **编译时排除**：路由通过 `import.meta.env.DEV` 条件注册，Vite 在生产构建时 tree-shake 掉整个 `RagInspectorView` 及其子组件。生产包中不会包含此页面的任何代码。
 
+### 8.2.1 故事管理页内联 GraphRAG（dev-only）
+
+在 `src/views/ScriptListView.vue` 的“已索引故事”列表卡片中，为每个 story 提供一个 dev-only 的“查看 GraphRAG / 收起 GraphRAG”折叠面板。展开后会懒加载 `getStoryGraph(scriptId)`（IPC: `rag:getGraph`），并复用 `src/components/rag/GraphBrowser.vue` 显示：
+
+- 节点（entities：人物/线索/场景等）
+- 关系边（edges：located_in/contains/unlocks/...）
+- 社区摘要（communitySummaries：由 LLM 对连通子图聚合后的报告）
+
+该入口用于在“索引完成”后校验 GraphRAG 提取质量，不影响游戏游玩时的运行时关系展示。
+
+在内联折叠面板中还提供了一个 dev-only 的快速校验按钮：`测试 GraphRAG 抽取（前6 chunks）`。
+该按钮会从已落盘的 `rag_index` 里取少量 chunks，直接调用 GraphRAG 抽取（LLM + `parseExtractOutput`），并在 UI 中展示每个 batch 的原始输出截断、entities/relations 解析数量与错误信息（用于定位“模型没调用”还是“输出格式不可解析”）。
+
 ### 8.3 IPC 新增
 
 | Channel | 参数 | 返回 | 用途 |
 |---------|------|------|------|
 | `rag:getIndex` | `{ scriptId }` | `{ scriptId, storyName, chunkCount, chunks[] }` | 获取完整 chunk 列表（含 content、type、metadata、向量状态） |
 | `rag:getGraph` | `{ scriptId }` | `{ scriptId, storyName, nodes[], edges[], communitySummaries }` 或 `null` | 获取完整 GraphRAG 数据 |
+| `rag:testGraphRagExtract` | `{ scriptId, maxChunks?, maxBatches? }` | `{ ok, results[] }` | 从 `rag_index` 抽取少量 chunks 测试 GraphRAG 抽取：返回每个 batch 的原始输出片段与解析 entities/relations 数量（用于定位“模型没调用” vs “解析失败”） |
+| `rag:testEmbedding` | `无`（使用当前 settings） | `{ ok, vectorLength? }` | 测试当前 embedding 配置是否能成功返回向量（用于配置排错） |
 
 ### 8.4 新增文件
 
 | 文件 | 职责 |
 |------|------|
 | `src/views/RagInspectorView.vue` | 主视图：故事选择 + Tab 切换 + 统计概览 |
+| `src/views/ScriptListView.vue` | 故事管理页：索引完成后内联折叠面板（GraphBrowser） |
 | `src/components/rag/ChunkBrowser.vue` | Chunk 浏览器：分页、按 type 过滤、全文搜索、展开详情 |
 | `src/components/rag/GraphBrowser.vue` | Graph 浏览器：节点列表（按类型过滤）、关系边表格、社区摘要、节点详情 + 关联边 |
 | `src/components/rag/SearchTester.vue` | 搜索测试器：输入查询 → 调用 ragQuery/ragContext → 展示结果 + 耗时 |
@@ -293,6 +309,7 @@ RagInspectorView.vue
 | `src/env.d.ts` | 新增 `ragGetIndex` / `ragGetGraph` 类型声明 |
 | `src/services/ragService.ts` | 新增 `getStoryIndex()` / `getStoryGraph()` 函数 |
 | `src/router/index.ts` | 通过 `import.meta.env.DEV` 条件注册 `/rag-inspector` 路由 |
+| `src/views/ScriptListView.vue` | 已索引故事：内联折叠面板懒加载并复用 GraphBrowser |
 
 ### 8.6 功能详情
 

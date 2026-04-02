@@ -869,7 +869,7 @@ async function invokeChat(params) {
 /* ═══════════════════ Model Listing ═══════════════════ */
 
 async function listModels(params) {
-  const { provider, baseUrl: paramBaseUrl, apiKey: paramApiKey } = params || {}
+  const { provider, baseUrl: paramBaseUrl, apiKey: paramApiKey, purpose = 'chat' } = params || {}
   const settings = await readSettings()
   const ai = settings?.ai || {}
   const apiKey = (paramApiKey && paramApiKey !== '***' ? paramApiKey : null) ||
@@ -890,13 +890,19 @@ async function listModels(params) {
       const res = await fetch(modelsUrl, { headers })
       if (!res.ok) return []
       const data = await res.json()
-      return (data.data || []).filter((m) => m.id).map((m) => ({ value: m.id, label: m.id })).slice(0, 100)
+      let models = (data.data || []).filter((m) => m.id).map((m) => ({ value: m.id, label: m.id }))
+      if (purpose === 'embeddings') {
+        const filtered = models.filter((m) => /(embedding|embed)/i.test(m.value))
+        if (filtered.length) models = filtered
+      }
+      return models.slice(0, 100)
     } catch (_e) {
       return []
     }
   }
 
   if (protocol === 'anthropic_compatible') {
+    if (purpose === 'embeddings') return []
     return [
       { value: 'claude-sonnet-4-20250514', label: 'Claude Sonnet 4' },
       { value: 'claude-3-7-sonnet-20250219', label: 'Claude 3.7 Sonnet' },
@@ -916,12 +922,17 @@ async function listModels(params) {
       )
       if (!res.ok) return []
       const data = await res.json()
-      return (data.models || [])
-        .filter((m) => m.name && (m.supportedGenerationMethods || []).includes('generateContent'))
-        .map((m) => {
-          const id = (m.name || '').replace('models/', '') || m.name || ''
-          return { value: id, label: m.displayName || id }
-        })
+      const models = data.models || []
+      const chatFiltered = models.filter((m) => m.name && (m.supportedGenerationMethods || []).includes('generateContent'))
+      const embedFiltered = models.filter((m) => {
+        const methods = m.supportedGenerationMethods || []
+        return m.name && (methods.includes('embedContent') || methods.includes('embedText') || methods.includes('embedding'))
+      })
+      const final = purpose === 'embeddings' ? (embedFiltered.length ? embedFiltered : chatFiltered) : chatFiltered
+      return final.map((m) => {
+        const id = (m.name || '').replace('models/', '') || m.name || ''
+        return { value: id, label: m.displayName || id }
+      })
     } catch (_e) {
       return []
     }
