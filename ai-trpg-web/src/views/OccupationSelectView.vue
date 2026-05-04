@@ -82,35 +82,40 @@ onMounted(() => {
 </script>
 
 <template>
-  <div class="min-h-screen flex flex-col">
-    <!-- Progress indicator -->
-    <div class="px-6 pt-8 pb-4 max-w-4xl mx-auto w-full">
-      <div class="flex items-center justify-center gap-2 mb-8">
-        <div class="flex items-center gap-2">
-          <span class="w-7 h-7 rounded-full bg-eldritch-600 border border-eldritch-500
-                       flex items-center justify-center text-xs font-bold text-parchment-200">1</span>
-          <span class="text-xs font-medium text-parchment-300">选择职业</span>
-        </div>
-        <div class="w-8 h-px bg-gray-700" />
-        <div class="flex items-center gap-2">
-          <span class="w-7 h-7 rounded-full bg-gray-800 border border-gray-700
-                       flex items-center justify-center text-xs text-gray-500">2</span>
-          <span class="text-xs text-gray-600">技能与属性</span>
-        </div>
-        <div class="w-8 h-px bg-gray-700" />
-        <div class="flex items-center gap-2">
-          <span class="w-7 h-7 rounded-full bg-gray-800 border border-gray-700
-                       flex items-center justify-center text-xs text-gray-500">3</span>
-          <span class="text-xs text-gray-600">进入游戏</span>
-        </div>
-      </div>
+  <div class="min-h-screen flex flex-col relative bg-cover bg-center bg-no-repeat bg-fixed"
+       style="background-image: url('/src/assets/bg/bg_desk.png');">
+    <!-- Thematic dark overlay for contrast -->
+    <div class="absolute inset-0 bg-black/70 pointer-events-none z-0"></div>
 
-      <h1 class="gothic-heading text-2xl font-bold text-center">选择职业</h1>
-      <p class="mt-2 text-center text-sm text-gray-500">
-        故事：<span class="text-parchment-400">{{ storyName || storyId || '—' }}</span>
-      </p>
-      <div class="mt-2 mx-auto w-16 h-px bg-gradient-to-r from-transparent via-eldritch-500 to-transparent" />
-    </div>
+    <div class="relative z-10 flex flex-col flex-1">
+      <!-- Progress indicator -->
+      <div class="px-6 pt-8 pb-4 max-w-4xl mx-auto w-full">
+        <div class="flex items-center justify-center gap-2 mb-8">
+          <!-- Step 1 — Active -->
+          <div class="flex items-center gap-2">
+            <span class="step-circle step-active">1</span>
+            <span class="text-xs font-medium" style="color: hsl(38, 35%, 85%);">选择职业</span>
+          </div>
+          <div class="step-line step-line-dim" />
+          <!-- Step 2 -->
+          <div class="flex items-center gap-2">
+            <span class="step-circle step-dim">2</span>
+            <span class="text-xs" style="color: hsl(220, 10%, 45%);">技能与属性</span>
+          </div>
+          <div class="step-line step-line-dim" />
+          <!-- Step 3 -->
+          <div class="flex items-center gap-2">
+            <span class="step-circle step-dim">3</span>
+            <span class="text-xs" style="color: hsl(220, 10%, 45%);">进入游戏</span>
+          </div>
+        </div>
+
+        <h1 class="gothic-heading text-2xl font-bold text-center text-white" style="text-shadow: 0 1px 4px rgba(0,0,0,0.8);">选择职业</h1>
+        <p class="mt-2 text-center text-sm" style="color: hsl(220, 10%, 60%);">
+          故事：<span style="color: hsl(38, 50%, 75%);">{{ storyName || storyId || '—' }}</span>
+        </p>
+        <div class="mt-3 mx-auto max-w-[80px] ink-divider" />
+      </div>
 
     <!-- Search + Filters -->
     <div class="px-6 max-w-4xl mx-auto w-full space-y-4 pb-4">
@@ -120,9 +125,10 @@ onMounted(() => {
           v-model="searchQuery"
           type="text"
           placeholder="搜索职业名称（中文 / 英文）…"
-          class="gothic-input w-full pl-10 pr-4 py-2.5 text-sm"
+          class="gothic-input w-full pl-10 pr-4 py-2.5 text-sm bg-black/40 backdrop-blur-md"
         />
-        <svg class="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-500 pointer-events-none"
+        <svg class="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 pointer-events-none"
+             style="color: hsl(220, 10%, 50%);"
              fill="none" stroke="currentColor" viewBox="0 0 24 24">
           <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
                 d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z"/>
@@ -131,17 +137,15 @@ onMounted(() => {
 
       <!-- Era filter -->
       <div class="flex items-center gap-2">
-        <span class="text-xs text-gray-500 shrink-0">时代：</span>
+        <span class="text-xs shrink-0" style="color: hsl(220, 10%, 30%);">时代：</span>
         <div class="flex flex-wrap gap-1.5">
           <button
             v-for="era in eraOptions"
             :key="era.key"
             type="button"
             @click="selectedEra = era.key"
-            class="px-3 py-1 rounded-md text-xs font-medium transition-all duration-200 border"
-            :class="selectedEra === era.key
-              ? 'bg-eldritch-600/30 border-eldritch-500/60 text-eldritch-300'
-              : 'bg-gray-800/40 border-gray-700/40 text-gray-500 hover:text-gray-300 hover:border-gray-600'"
+            class="filter-pill"
+            :class="selectedEra === era.key ? 'filter-pill-active' : 'filter-pill-dim'"
           >{{ era.label }}</button>
         </div>
       </div>
@@ -153,10 +157,8 @@ onMounted(() => {
           :key="cat.key"
           type="button"
           @click="selectedCategory = cat.key"
-          class="px-3 py-1.5 rounded-md text-xs font-medium transition-all duration-200 border"
-          :class="selectedCategory === cat.key
-            ? 'bg-eldritch-600/30 border-eldritch-500/60 text-eldritch-300'
-            : 'bg-gray-800/40 border-gray-700/40 text-gray-500 hover:text-gray-300 hover:border-gray-600'"
+          class="filter-pill"
+          :class="selectedCategory === cat.key ? 'filter-pill-active' : 'filter-pill-dim'"
         >
           {{ cat.label }}
           <span v-if="categoryCounts[cat.key]" class="ml-1 opacity-60">{{ categoryCounts[cat.key] }}</span>
@@ -167,7 +169,8 @@ onMounted(() => {
     <!-- Occupation grid -->
     <div class="flex-1 px-6 pb-12 max-w-4xl mx-auto w-full">
       <p v-if="filteredOccupations.length === 0"
-         class="text-center text-gray-600 py-12 text-sm">
+         class="text-center py-12 text-sm font-serif italic"
+         style="color: hsl(220, 10%, 22%);">
         未找到匹配的职业，请尝试其他搜索关键词或筛选条件
       </p>
 
@@ -179,49 +182,50 @@ onMounted(() => {
           @click="selectOccupation(occ.id, occ.name)"
           @mouseenter="hoveredOcc = occ.id"
           @mouseleave="hoveredOcc = null"
-          class="gothic-card p-4 text-left group hover:border-eldritch-600/60
-                 hover:shadow-eldritch transition-all duration-300 relative"
+          class="gothic-card bg-black/50 backdrop-blur-sm border-black/40 p-4 text-left group transition-all duration-300 relative
+                 hover:shadow-eldritch hover:-translate-y-0.5 hover:bg-black/70"
         >
           <div class="flex items-start justify-between gap-2">
             <div class="min-w-0 flex-1">
-              <h3 class="font-serif font-medium text-parchment-200 group-hover:text-parchment-100
-                         transition-colors truncate">
+              <h3 class="font-serif font-semibold transition-colors break-words"
+                  style="color: hsl(38, 50%, 88%);">
                 {{ occ.name }}
               </h3>
-              <p class="text-xs text-gray-500 mt-0.5 truncate">{{ occ.nameEn }}</p>
+              <p class="text-xs mt-0.5 break-words" style="color: hsl(220, 10%, 30%);">{{ occ.nameEn }}</p>
             </div>
             <div class="flex flex-col items-end gap-1 shrink-0">
               <span v-if="occ.era !== 'any'"
-                    class="text-[10px] px-1.5 py-0.5 rounded border"
-                    :class="occ.era === 'classic'
-                      ? 'text-amber-400/80 border-amber-700/30 bg-amber-900/20'
-                      : 'text-cyan-400/80 border-cyan-700/30 bg-cyan-900/20'">
+                    class="text-[10px] px-1.5 py-0.5 rounded"
+                    :class="occ.era === 'classic' ? 'era-classic' : 'era-modern'">
                 {{ eraLabel(occ.era) }}
               </span>
             </div>
           </div>
 
           <!-- Credit range -->
-          <div class="mt-2 flex items-center gap-2">
-            <span class="text-[10px] text-gray-600">信用</span>
-            <div class="flex-1 h-1 bg-gray-800 rounded-full overflow-hidden">
-              <div class="h-full bg-gradient-to-r from-eldritch-700 to-eldritch-500 rounded-full transition-all"
+          <div class="mt-3 flex items-center gap-2">
+            <span class="text-[10px]" style="color: hsl(220, 10%, 25%);">信用</span>
+            <div class="flex-1 h-1 rounded-full overflow-hidden" style="background: hsl(220, 16%, 11%);">
+              <div class="h-full rounded-full transition-all"
+                   style="background: linear-gradient(90deg, hsl(42, 55%, 32%), hsl(42, 70%, 50%));"
                    :style="{ marginLeft: occ.creditRange[0] + '%', width: (occ.creditRange[1] - occ.creditRange[0]) + '%' }" />
             </div>
-            <span class="text-[10px] text-gray-600 font-mono w-14 text-right">{{ occ.creditRange[0] }}-{{ occ.creditRange[1] }}</span>
+            <span class="text-[10px] font-mono w-14 text-right" style="color: hsl(220, 10%, 25%);">{{ occ.creditRange[0] }}-{{ occ.creditRange[1] }}</span>
           </div>
 
           <!-- Hover: select indicator -->
-          <span class="absolute right-3 bottom-3 text-xs text-eldritch-400
-                       bg-eldritch-800/40 px-2 py-0.5 rounded border border-eldritch-700/30
-                       opacity-0 group-hover:opacity-100 transition-opacity duration-200">
+          <span class="absolute right-3 bottom-3 text-xs px-2.5 py-1 rounded-md
+                       opacity-0 group-hover:opacity-100 transition-all duration-200"
+                style="background: hsla(165, 35%, 10%, 0.5);
+                       border: 1px solid hsla(165, 45%, 22%, 0.3);
+                       color: hsl(165, 50%, 78%);">
             选择
           </span>
         </button>
       </div>
 
       <!-- Count summary -->
-      <p class="mt-6 text-center text-xs text-gray-600">
+      <p class="mt-6 text-center text-xs" style="color: hsl(220, 10%, 45%);">
         共 {{ filteredOccupations.length }} 个职业
         <span v-if="filteredOccupations.length !== COC7_OCCUPATIONS.length">
           / 总计 {{ COC7_OCCUPATIONS.length }} 个
@@ -229,4 +233,70 @@ onMounted(() => {
       </p>
     </div>
   </div>
+</div>
 </template>
+
+<style scoped>
+.step-circle {
+  width: 1.75rem;
+  height: 1.75rem;
+  border-radius: 9999px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 0.75rem;
+  font-weight: 700;
+  font-family: 'Cinzel Decorative', serif;
+}
+.step-active {
+  background: hsla(165, 45%, 22%, 0.6);
+  border: 1px solid hsl(165, 55%, 28%);
+  color: hsl(165, 50%, 78%);
+  box-shadow: 0 0 10px hsla(165, 60%, 35%, 0.2);
+}
+.step-dim {
+  background: hsl(220, 16%, 11%);
+  border: 1px solid hsl(220, 14%, 16%);
+  color: hsl(220, 10%, 25%);
+}
+.step-line {
+  width: 2rem;
+  height: 1px;
+}
+.step-line-dim { background: hsl(220, 14%, 16%); }
+.step-line-active { background: hsl(165, 55%, 28%); }
+
+.filter-pill {
+  padding: 0.25rem 0.75rem;
+  border-radius: 0.375rem;
+  font-size: 0.75rem;
+  font-weight: 500;
+  transition: all 0.2s;
+  border: 1px solid transparent;
+}
+.filter-pill-active {
+  background: hsla(165, 45%, 22%, 0.3);
+  border-color: hsla(165, 55%, 28%, 0.5);
+  color: hsl(165, 50%, 78%);
+}
+.filter-pill-dim {
+  background: hsla(220, 16%, 11%, 0.5);
+  border-color: hsla(220, 14%, 16%, 0.5);
+  color: hsl(220, 10%, 30%);
+}
+.filter-pill-dim:hover {
+  color: hsl(38, 25%, 55%);
+  border-color: hsla(220, 12%, 22%, 0.6);
+}
+
+.era-classic {
+  background: hsla(42, 40%, 14%, 0.4);
+  border: 1px solid hsla(42, 55%, 35%, 0.3);
+  color: hsl(42, 60%, 70%);
+}
+.era-modern {
+  background: hsla(210, 35%, 15%, 0.4);
+  border: 1px solid hsla(210, 50%, 35%, 0.3);
+  color: hsl(210, 50%, 70%);
+}
+</style>

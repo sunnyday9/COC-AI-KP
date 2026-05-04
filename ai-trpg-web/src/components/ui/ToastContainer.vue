@@ -4,10 +4,10 @@ import { useToast } from '../../composables/useToast'
 const { toasts, dismiss } = useToast()
 
 const typeStyles: Record<string, string> = {
-  success: 'border-cthulhu-400 bg-cthulhu-500/90 text-cthulhu-50',
-  error: 'border-blood-500 bg-blood-700/90 text-blood-50',
-  info: 'border-eldritch-400 bg-eldritch-700/90 text-eldritch-50',
-  warning: 'border-parchment-500 bg-parchment-800/90 text-parchment-100',
+  success: 'toast-success',
+  error: 'toast-error',
+  info: 'toast-info',
+  warning: 'toast-warning',
 }
 
 const typeIcons: Record<string, string> = {
@@ -30,7 +30,8 @@ const typeIcons: Record<string, string> = {
         <div
           v-for="toast in toasts"
           :key="toast.id"
-          class="pointer-events-auto flex items-center gap-2 px-4 py-3 rounded-lg border backdrop-blur-sm shadow-lg max-w-sm cursor-pointer"
+          class="pointer-events-auto flex items-center gap-2 px-4 py-3 rounded-lg
+                 shadow-lg max-w-sm cursor-pointer toast-base"
           :class="typeStyles[toast.type] || typeStyles.info"
           @click="dismiss(toast.id)"
         >
@@ -41,3 +42,33 @@ const typeIcons: Record<string, string> = {
     </div>
   </Teleport>
 </template>
+
+<style scoped>
+.toast-base {
+  backdrop-filter: blur(12px);
+}
+.toast-success {
+  background: hsla(165, 45%, 15%, 0.9);
+  border: 1px solid hsla(165, 60%, 35%, 0.5);
+  color: hsl(165, 50%, 85%);
+  box-shadow: 0 4px 16px hsla(220, 20%, 4%, 0.5), 0 0 12px hsla(165, 60%, 35%, 0.15);
+}
+.toast-error {
+  background: hsla(0, 50%, 15%, 0.9);
+  border: 1px solid hsla(0, 65%, 35%, 0.5);
+  color: hsl(0, 55%, 88%);
+  box-shadow: 0 4px 16px hsla(220, 20%, 4%, 0.5), 0 0 12px hsla(0, 65%, 35%, 0.2);
+}
+.toast-info {
+  background: hsla(220, 18%, 12%, 0.9);
+  border: 1px solid hsla(165, 55%, 28%, 0.4);
+  color: hsl(165, 50%, 85%);
+  box-shadow: 0 4px 16px hsla(220, 20%, 4%, 0.5);
+}
+.toast-warning {
+  background: hsla(42, 40%, 14%, 0.9);
+  border: 1px solid hsla(42, 70%, 50%, 0.4);
+  color: hsl(42, 65%, 88%);
+  box-shadow: 0 4px 16px hsla(220, 20%, 4%, 0.5), 0 0 12px hsla(42, 70%, 50%, 0.15);
+}
+</style>

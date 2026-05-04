@@ -147,45 +147,47 @@ onMounted(() => {
 </script>
 
 <template>
-  <div class="min-h-screen flex flex-col">
-    <!-- Progress indicator -->
-    <div class="px-6 pt-8 pb-4 max-w-3xl mx-auto w-full">
-      <div class="flex items-center justify-center gap-2 mb-6">
-        <div class="flex items-center gap-2">
-          <span class="w-7 h-7 rounded-full bg-eldritch-800 border border-eldritch-700/50
-                       flex items-center justify-center text-xs text-eldritch-300">✓</span>
-          <span class="text-xs text-gray-500">选择职业</span>
-        </div>
-        <div class="w-8 h-px bg-eldritch-600" />
-        <div class="flex items-center gap-2">
-          <span class="w-7 h-7 rounded-full bg-eldritch-600 border border-eldritch-500
-                       flex items-center justify-center text-xs font-bold text-parchment-200">2</span>
-          <span class="text-xs font-medium text-parchment-300">技能与属性</span>
-        </div>
-        <div class="w-8 h-px bg-gray-700" />
-        <div class="flex items-center gap-2">
-          <span class="w-7 h-7 rounded-full bg-gray-800 border border-gray-700
-                       flex items-center justify-center text-xs text-gray-500">3</span>
-          <span class="text-xs text-gray-600">进入游戏</span>
-        </div>
-      </div>
+  <div class="min-h-screen flex flex-col relative bg-cover bg-center bg-no-repeat bg-fixed"
+       style="background-image: url('/src/assets/bg/bg_desk.png');">
+    <!-- Thematic dark overlay for contrast -->
+    <div class="absolute inset-0 bg-black/70 pointer-events-none z-0"></div>
 
-      <h1 class="gothic-heading text-2xl font-bold text-center">创建角色</h1>
-      <p class="mt-1 text-center text-sm text-gray-500">
-        职业：<span class="text-parchment-400 font-serif">{{ selectedOccupationName }}</span>
-      </p>
-      <div class="mt-2 mx-auto w-16 h-px bg-gradient-to-r from-transparent via-eldritch-500 to-transparent" />
-    </div>
+    <div class="relative z-10 flex flex-col flex-1">
+      <!-- Progress indicator -->
+      <div class="px-6 pt-8 pb-4 max-w-3xl mx-auto w-full">
+        <div class="flex items-center justify-center gap-2 mb-6">
+          <div class="flex items-center gap-2">
+            <span class="step-circle step-done">✓</span>
+            <span class="text-xs" style="color: hsl(220, 10%, 60%);">选择职业</span>
+          </div>
+          <div class="step-line step-line-active" />
+          <div class="flex items-center gap-2">
+            <span class="step-circle step-active">2</span>
+            <span class="text-xs font-medium" style="color: hsl(38, 35%, 85%);">技能与属性</span>
+          </div>
+          <div class="step-line step-line-dim" />
+          <div class="flex items-center gap-2">
+            <span class="step-circle step-dim">3</span>
+            <span class="text-xs" style="color: hsl(220, 10%, 45%);">进入游戏</span>
+          </div>
+        </div>
+
+        <h1 class="gothic-heading text-2xl font-bold text-center text-white" style="text-shadow: 0 1px 4px rgba(0,0,0,0.8);">创建角色</h1>
+        <p class="mt-1 text-center text-sm" style="color: hsl(220, 10%, 60%);">
+          职业：<span class="font-display" style="color: hsl(38, 50%, 75%); text-shadow: 0 0 10px rgba(0,0,0,0.5);">{{ selectedOccupationName }}</span>
+        </p>
+        <div class="mt-3 mx-auto max-w-[80px] ink-divider" />
+      </div>
 
     <!-- Content -->
     <div class="flex-1 px-6 pb-12 max-w-3xl mx-auto w-full space-y-8">
 
       <!-- Occupation Skills -->
-      <section class="gothic-card p-5">
-        <h2 class="gothic-heading text-base font-semibold mb-4 flex items-center gap-2">
-          <span class="text-eldritch-400">⚔</span>
+      <section class="gothic-card bg-black/50 p-6">
+        <h2 class="gothic-heading text-base font-bold mb-4 flex items-center gap-2">
+          <span style="color: hsl(165, 50%, 60%);">⚔</span>
           职业技能
-          <span class="text-xs font-normal text-gray-500 font-body">(9 项：70, 60, 60, 50, 50, 50, 40, 40, 40)</span>
+          <span class="text-xs font-normal font-body" style="color: hsl(220, 10%, 60%);">(9 项：70, 60, 60, 50, 50, 50, 40, 40, 40)</span>
         </h2>
         <div class="space-y-2">
           <div
@@ -194,13 +196,13 @@ onMounted(() => {
             class="flex items-center gap-3 py-1.5"
           >
             <span class="w-10 text-right text-xs font-mono font-bold shrink-0"
-                  :class="(OCCUPATION_SKILL_VALUES[i] ?? 0) >= 60 ? 'text-parchment-300' : 'text-gray-500'">
+                  :style="{ color: (OCCUPATION_SKILL_VALUES[i] ?? 0) >= 60 ? 'hsl(38, 35%, 68%)' : 'hsl(220, 10%, 30%)' }">
               {{ OCCUPATION_SKILL_VALUES[i] ?? 0 }}%
             </span>
 
             <!-- Fixed skill -->
             <span v-if="slotTypes[i] === 'fixed'"
-                  class="text-sm text-parchment-200 font-medium">
+                  class="text-sm font-serif font-medium" style="color: hsl(38, 40%, 78%);">
               {{ getSkillName(key) }}
             </span>
 
@@ -226,39 +228,37 @@ onMounted(() => {
       </section>
 
       <!-- Attributes -->
-      <section class="gothic-card p-5">
-        <h2 class="gothic-heading text-base font-semibold mb-4 flex items-center gap-2">
-          <span class="text-amber-400">🎲</span>
+      <section class="gothic-card bg-black/50 p-6">
+        <h2 class="gothic-heading text-base font-bold mb-4 flex items-center gap-2">
+          <span style="color: hsl(42, 65%, 65%);">🎲</span>
           属性投掷
-          <span class="text-xs font-normal text-gray-500 font-body">(3d6×5)</span>
+          <span class="text-xs font-normal font-body" style="color: hsl(220, 10%, 60%);">(3d6×5)</span>
         </h2>
-        <button type="button" @click="rollAttrs"
-                class="gothic-btn text-sm px-5">
+        <button type="button" @click="rollAttrs" class="gothic-btn text-sm px-5">
           {{ attributes ? '重新投掷' : '投掷属性' }}
         </button>
         <div v-if="attributes"
              class="mt-4 grid grid-cols-3 gap-3"
              :class="{ 'animate-fade-in': attrAnimating }">
           <div v-for="(v, k) in attributes" :key="k"
-               class="flex items-center justify-between px-3 py-2 rounded-lg
-                      bg-gray-800/60 border border-gray-700/50">
-            <span class="text-xs font-bold tracking-wider text-gray-400 uppercase">{{ k }}</span>
-            <span class="font-mono font-bold text-parchment-200">{{ v }}</span>
+               class="flex items-center justify-between px-3 py-2.5 rounded-lg attr-cell">
+            <span class="text-xs font-bold tracking-wider uppercase font-mono" style="color: hsl(220, 10%, 30%);">{{ k }}</span>
+            <span class="font-mono font-bold" style="color: hsl(38, 50%, 88%);">{{ v }}</span>
           </div>
         </div>
       </section>
 
       <!-- Personal Interest Skills -->
-      <section class="gothic-card p-5">
-        <h2 class="gothic-heading text-base font-semibold mb-4 flex items-center gap-2">
-          <span class="text-cthulhu-300">✦</span>
+      <section class="gothic-card bg-black/50 p-6">
+        <h2 class="gothic-heading text-base font-bold mb-4 flex items-center gap-2">
+          <span style="color: hsl(165, 50%, 60%);">✦</span>
           兴趣技能
-          <span class="text-xs font-normal text-gray-500 font-body">(任选 4 项，每项 +20%，可与职业技能重叠叠加)</span>
+          <span class="text-xs font-normal font-body" style="color: hsl(220, 10%, 60%);">(任选 4 项，每项 +20%，可与职业技能重叠叠加)</span>
         </h2>
         <div class="space-y-2">
           <div v-for="(pk, idx) in personalInterestKeys" :key="idx"
                class="flex items-center gap-3">
-            <span class="w-10 text-right text-xs font-mono text-cthulhu-400 shrink-0">+{{ PERSONAL_INTEREST_BONUS }}%</span>
+            <span class="w-10 text-right text-xs font-mono shrink-0" style="color: hsl(165, 50%, 50%);">+{{ PERSONAL_INTEREST_BONUS }}%</span>
             <select :value="pk"
                     @change="(e) => setPersonalInterest(idx, (e.target as HTMLSelectElement).value)"
                     class="gothic-select text-sm flex-1 max-w-md py-1.5">
@@ -272,9 +272,9 @@ onMounted(() => {
       </section>
 
       <!-- Player Name -->
-      <section class="gothic-card p-5">
-        <h2 class="gothic-heading text-base font-semibold mb-3 flex items-center gap-2">
-          <span class="text-parchment-400">✎</span>
+      <section class="gothic-card bg-black/50 p-6">
+        <h2 class="gothic-heading text-base font-bold mb-3 flex items-center gap-2">
+          <span style="color: hsl(38, 30%, 65%);">✎</span>
           调查员姓名
         </h2>
         <input v-model="playerName" type="text"
@@ -292,10 +292,49 @@ onMounted(() => {
         <button type="button"
                 @click="confirm"
                 :disabled="!canConfirm()"
-                class="gothic-btn text-sm px-6">
+                class="gothic-btn text-sm px-6 bg-black/60">
           确认角色并进入游戏
         </button>
       </div>
     </div>
   </div>
+</div>
 </template>
+
+<style scoped>
+.step-circle {
+  width: 1.75rem;
+  height: 1.75rem;
+  border-radius: 9999px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 0.75rem;
+  font-weight: 700;
+  font-family: 'Cinzel Decorative', serif;
+}
+.step-active {
+  background: hsla(165, 45%, 22%, 0.6);
+  border: 1px solid hsl(165, 55%, 28%);
+  color: hsl(165, 50%, 78%);
+  box-shadow: 0 0 10px hsla(165, 60%, 35%, 0.2);
+}
+.step-done {
+  background: hsla(165, 40%, 15%, 0.5);
+  border: 1px solid hsla(165, 45%, 22%, 0.5);
+  color: hsl(165, 50%, 60%);
+}
+.step-dim {
+  background: hsl(220, 16%, 11%);
+  border: 1px solid hsl(220, 14%, 16%);
+  color: hsl(220, 10%, 25%);
+}
+.step-line { width: 2rem; height: 1px; }
+.step-line-dim { background: hsl(220, 14%, 16%); }
+.step-line-active { background: hsl(165, 55%, 28%); }
+
+.attr-cell {
+  background: hsla(220, 16%, 11%, 0.6);
+  border: 1px solid hsla(220, 14%, 16%, 0.5);
+}
+</style>

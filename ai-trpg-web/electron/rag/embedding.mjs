@@ -3,8 +3,8 @@
  */
 
 const DEFAULT_API_MODEL = 'text-embedding-3-small'
-/** Chinese sentence embedding (text2vec); ONNX-converted for Transformers.js */
-const BUILTIN_MODEL_ID = 'Xenova/text2vec-base-chinese-sentence'
+/** Chinese sentence embedding (text2vec); ONNX model for Transformers.js */
+const BUILTIN_MODEL_ID = 'shibing624/text2vec-base-chinese-sentence'
 
 let builtinPipeline = null
 
@@ -15,7 +15,7 @@ let builtinPipeline = null
  */
 export async function createBuiltinEmbedder() {
   try {
-    const { pipeline } = await import('@xenova/transformers')
+    const { pipeline } = await import('@huggingface/transformers')
     if (!builtinPipeline) {
       builtinPipeline = await pipeline('feature-extraction', BUILTIN_MODEL_ID)
     }

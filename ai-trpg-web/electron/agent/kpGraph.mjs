@@ -512,6 +512,7 @@ function createGenerateNode(invokeLLM, agentKind) {
     var hintBlock = '### 行动计划\n' + toolPlan + toolInstruction + storyContextBlock +
       '\n\n【输出规则】只输出给调查员看的剧情与对话。不要出现规则说明、意图分类、工具名称等内部内容。' +
       '绝对禁止在文字中编造骰子结果或数值变化，所有检定和数值变更必须通过工具实现。' +
+      '【极度严厉警告】如果你需要使用工具（如 san_check 等），请直接触发底层的 Tool Call 机制！**绝对禁止**在回复的文本中写出“请调用xxx”或任何带有参数的代码指令。工具调用必须隐形！' +
       agentHint
 
     var enhancedMsgs = msgs.slice()

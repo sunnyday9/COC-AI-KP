@@ -2,6 +2,9 @@ const { app, BrowserWindow } = require('electron');
 const path = require('path');
 const { registerAllHandlers } = require('./ipc/index.cjs');
 
+// Disable GPU acceleration in environments without proper GPU support (e.g. WSL)
+app.disableHardwareAcceleration();
+
 // E2E support (only when E2E_FORCE_PROD=1 to avoid accidental override):
 // - E2E_USER_DATA_DIR: isolate Electron userData for repeatable tests (must be absolute path)
 // - E2E_FORCE_PROD=1: force loading dist (no dev server needed)

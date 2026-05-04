@@ -92,7 +92,7 @@ function formatDate(ts: number): string {
 async function toggleGraphPanel(storyId: string) {
   expandedGraph.value[storyId] = !expandedGraph.value[storyId]
   if (!expandedGraph.value[storyId]) return
-  if (graphCache.value[storyId] !== undefined) return // already loaded (including null)
+  if (graphCache.value[storyId] !== undefined) return
 
   graphLoading.value[storyId] = true
   try {
@@ -127,28 +127,33 @@ async function handleTestGraphRagExtract(storyId: string) {
 </script>
 
 <template>
-  <div class="min-h-screen flex flex-col">
-    <!-- Header -->
-    <div class="px-6 pt-8 pb-4 max-w-4xl mx-auto w-full">
-      <div class="flex items-center justify-between">
-        <div>
-          <h1 class="gothic-heading text-2xl font-bold">故事管理</h1>
-          <p class="mt-1 text-sm text-gray-500">导入故事文件并索引到向量数据库，供 AI KP 参考</p>
+  <div class="min-h-screen flex flex-col relative bg-cover bg-center bg-no-repeat bg-fixed"
+       style="background-image: url('/src/assets/bg/bg_archives.png');">
+    <!-- Thematic dark overlay for contrast -->
+    <div class="absolute inset-0 bg-black/70 pointer-events-none z-0"></div>
+
+    <div class="relative z-10 flex flex-col flex-1">
+      <!-- Header -->
+      <div class="px-6 pt-8 pb-4 max-w-4xl mx-auto w-full">
+        <div class="flex items-center justify-between">
+          <div>
+            <h1 class="gothic-heading text-2xl font-bold text-white" style="text-shadow: 0 1px 4px rgba(0,0,0,0.8);">故事管理</h1>
+            <p class="mt-1 text-sm" style="color: hsl(220, 10%, 60%);">导入故事文件并索引到向量数据库，供 AI KP 参考</p>
+          </div>
+          <div v-if="hasElectron" class="flex gap-2">
+            <button type="button" @click="handleImport" class="gothic-btn text-sm bg-black/60">
+              导入故事
+            </button>
+          </div>
         </div>
-        <div v-if="hasElectron" class="flex gap-2">
-          <button type="button" @click="handleImport"
-                  class="gothic-btn text-sm">
-            导入故事
-          </button>
-        </div>
+        <div class="mt-3 max-w-[80px] ink-divider" />
       </div>
-      <div class="mt-3 w-16 h-px bg-gradient-to-r from-eldritch-500 to-transparent" />
-    </div>
 
     <div class="flex-1 px-6 pb-12 max-w-4xl mx-auto w-full space-y-6">
 
       <!-- No Electron -->
-      <p v-if="!hasElectron" class="gothic-card p-5 text-center text-sm text-parchment-400">
+      <p v-if="!hasElectron" class="gothic-card p-5 text-center text-sm font-serif italic bg-black/40 backdrop-blur-md"
+         style="color: hsl(38, 25%, 65%);">
         请在 Electron 桌面应用中运行以使用完整功能
       </p>
 
@@ -156,39 +161,43 @@ async function handleTestGraphRagExtract(storyId: string) {
         <!-- Story files section -->
         <section>
           <div class="flex items-center justify-between mb-3">
-            <h2 class="gothic-heading text-sm font-semibold flex items-center gap-2">
-              <span class="text-parchment-400">&#x1F4C4;</span> 故事文件
+            <h2 class="gothic-heading text-sm font-bold flex items-center gap-2">
+              <span style="color: hsl(38, 30%, 55%);">📄</span> 故事文件
             </h2>
-            <div class="flex gap-2">
+            <div class="flex gap-3">
               <button type="button" @click="storyStore.loadStories()" :disabled="storiesLoading"
-                      class="text-[11px] text-eldritch-400 hover:text-eldritch-300 disabled:opacity-50">
+                      class="text-[11px] transition-colors disabled:opacity-50"
+                      style="color: hsl(165, 50%, 50%);">
                 刷新
               </button>
               <button v-if="storyFiles.length" type="button" @click="handleIndexAll"
-                      class="text-[11px] text-cthulhu-300 hover:text-cthulhu-200">
+                      class="text-[11px]" style="color: hsl(165, 60%, 50%);">
                 索引全部
               </button>
             </div>
           </div>
 
           <!-- Loading -->
-          <div v-if="storiesLoading && storyFiles.length === 0" class="gothic-card p-8 text-center">
-            <div class="inline-block w-6 h-6 border-2 border-eldritch-500 border-t-transparent rounded-full animate-spin" />
-            <p class="mt-3 text-gray-500 text-sm">加载中...</p>
+          <div v-if="storiesLoading && storyFiles.length === 0" class="gothic-card p-8 text-center bg-black/40 backdrop-blur-md">
+            <div class="sigil-spinner mx-auto" />
+            <p class="mt-3 text-sm font-serif italic" style="color: hsl(220, 10%, 50%);">加载中...</p>
           </div>
 
           <!-- File list -->
           <div v-else-if="storyFiles.length" class="space-y-2">
             <div v-for="story in storyFiles" :key="story.path"
-                 class="gothic-card p-3.5 flex items-center justify-between group">
+                 class="gothic-card p-4 flex items-center justify-between group bg-black/50 backdrop-blur-sm border-black/40 hover:bg-black/60">
               <div class="flex items-center gap-3 min-w-0">
-                <div class="flex-shrink-0 w-9 h-9 rounded-lg bg-parchment-900/30 border border-parchment-800/40
-                            flex items-center justify-center text-parchment-400 font-serif text-sm">
+                <div class="flex-shrink-0 w-9 h-9 rounded-lg flex items-center justify-center font-display text-sm"
+                     style="background: hsla(38, 18%, 18%, 0.4);
+                            border: 1px solid hsla(38, 20%, 30%, 0.3);
+                            color: hsl(38, 35%, 68%);">
                   {{ story.name.charAt(0) }}
                 </div>
                 <div class="min-w-0">
-                  <h3 class="font-medium text-parchment-200 truncate text-sm">{{ story.name }}</h3>
-                  <p class="text-[10px] mt-0.5" :class="isIndexed(story.path) ? 'text-cthulhu-400' : 'text-gray-600'">
+                  <h3 class="font-serif font-semibold break-words text-sm" style="color: hsl(38, 50%, 88%);">{{ story.name }}</h3>
+                  <p class="text-[10px] mt-0.5"
+                     :style="{ color: isIndexed(story.path) ? 'hsl(165, 50%, 50%)' : 'hsl(220, 10%, 25%)' }">
                     {{ isIndexed(story.path) ? '已索引' : '未索引' }}
                   </p>
                 </div>
@@ -196,16 +205,19 @@ async function handleTestGraphRagExtract(storyId: string) {
               <div class="flex gap-1.5 shrink-0">
                 <button type="button" @click="handleIndexStory(story.path)"
                         :disabled="indexStatus[story.path] === 'loading'"
-                        class="text-[11px] px-2.5 py-1 rounded-md transition-all duration-200
-                               bg-cthulhu-800/50 border border-cthulhu-600/30 text-cthulhu-200
-                               hover:bg-cthulhu-700/50 disabled:opacity-50">
+                        class="text-[11px] px-2.5 py-1 rounded-md transition-all duration-200 disabled:opacity-50"
+                        style="background: hsla(165, 35%, 10%, 0.5);
+                               border: 1px solid hsla(165, 45%, 22%, 0.3);
+                               color: hsl(165, 50%, 78%);">
                   {{ indexStatus[story.path] === 'loading' ? '索引中...'
                    : indexStatus[story.path] === 'ok' ? '✓ 完成' : '索引' }}
                 </button>
                 <button type="button" @click="handleDeleteStory(story.path, story.name)"
                         class="text-[11px] px-2.5 py-1 rounded-md transition-all duration-200
-                               bg-blood-900/30 border border-blood-700/30 text-blood-300
-                               hover:bg-blood-800/40 opacity-0 group-hover:opacity-100">
+                               opacity-0 group-hover:opacity-100"
+                        style="background: hsla(0, 50%, 15%, 0.3);
+                               border: 1px solid hsla(0, 55%, 22%, 0.3);
+                               color: hsl(0, 55%, 65%);">
                   删除
                 </button>
               </div>
@@ -213,35 +225,37 @@ async function handleTestGraphRagExtract(storyId: string) {
           </div>
 
           <!-- Empty -->
-          <div v-else class="gothic-card p-8 text-center">
-            <p class="text-lg text-gray-600 font-serif mb-2">"书架上空无一物..."</p>
-            <p class="text-sm text-gray-500">点击「导入故事」添加 PDF、TXT 或 MD 文件</p>
+          <div v-else class="gothic-card p-8 text-center bg-black/40 backdrop-blur-md">
+            <p class="text-lg font-serif italic mb-2" style="color: hsl(220, 10%, 45%);">"书架上空无一物..."</p>
+            <p class="text-sm" style="color: hsl(220, 10%, 55%);">点击「导入故事」添加 PDF、TXT 或 MD 文件</p>
           </div>
         </section>
 
         <!-- Indexed stories section -->
         <section>
           <div class="flex items-center justify-between mb-3">
-            <h2 class="gothic-heading text-sm font-semibold flex items-center gap-2">
-              <span class="text-cthulhu-400">&#x1F5C3;</span> 已索引故事
+            <h2 class="gothic-heading text-sm font-bold flex items-center gap-2">
+              <span style="color: hsl(165, 50%, 50%);">🗃</span> 已索引故事
             </h2>
             <button type="button" @click="refreshIndexed"
-                    class="text-[11px] text-eldritch-400 hover:text-eldritch-300">
+                    class="text-[11px]" style="color: hsl(165, 50%, 50%);">
               刷新
             </button>
           </div>
 
           <div v-if="indexedStories.length" class="space-y-2">
-            <div v-for="idx in indexedStories" :key="idx.storyId" class="gothic-card p-3.5 group">
+            <div v-for="idx in indexedStories" :key="idx.storyId" class="gothic-card p-4 group bg-black/50 backdrop-blur-sm border-black/40 hover:bg-black/60">
               <div class="flex items-center justify-between">
                 <div class="flex items-center gap-3 min-w-0">
-                  <div class="flex-shrink-0 w-9 h-9 rounded-lg bg-cthulhu-900/40 border border-cthulhu-700/40
-                              flex items-center justify-center text-cthulhu-300 font-serif text-sm">
+                  <div class="flex-shrink-0 w-9 h-9 rounded-lg flex items-center justify-center font-display text-sm"
+                       style="background: hsla(165, 35%, 10%, 0.5);
+                              border: 1px solid hsla(165, 45%, 22%, 0.4);
+                              color: hsl(165, 50%, 78%);">
                     {{ idx.name.charAt(0) }}
                   </div>
                   <div class="min-w-0">
-                    <h3 class="font-medium text-parchment-200 truncate text-sm">{{ idx.name }}</h3>
-                    <p class="text-[10px] text-gray-500 mt-0.5">
+                    <h3 class="font-serif font-semibold break-words text-sm" style="color: hsl(38, 50%, 88%);">{{ idx.name }}</h3>
+                    <p class="text-[10px] mt-0.5" style="color: hsl(220, 10%, 30%);">
                       {{ idx.chunkCount }} 个信息块
                       <span v-if="idx.indexedAt" class="ml-2">{{ formatDate(idx.indexedAt) }}</span>
                     </p>
@@ -253,22 +267,25 @@ async function handleTestGraphRagExtract(storyId: string) {
                     v-if="isDev"
                     type="button"
                     @click="toggleGraphPanel(idx.storyId)"
-                    class="text-[11px] px-2.5 py-1 rounded-md transition-all duration-200
-                           bg-gray-800/40 border border-gray-700/30 text-gray-300
-                           hover:bg-gray-800/60">
+                    class="text-[11px] px-2.5 py-1 rounded-md transition-all duration-200"
+                    style="background: hsla(220, 16%, 11%, 0.5);
+                           border: 1px solid hsla(220, 14%, 16%, 0.5);
+                           color: hsl(38, 25%, 55%);">
                     {{ expandedGraph[idx.storyId] ? '收起 GraphRAG' : '查看 GraphRAG' }}
                   </button>
 
                   <button type="button" @click="handleDeleteIndex(idx.storyId, idx.name)"
                           class="text-[11px] px-2.5 py-1 rounded-md transition-all duration-200
-                                 bg-blood-900/30 border border-blood-700/30 text-blood-300
-                                 hover:bg-blood-800/40 opacity-0 group-hover:opacity-100 shrink-0">
+                                 opacity-0 group-hover:opacity-100 shrink-0"
+                          style="background: hsla(0, 50%, 15%, 0.3);
+                                 border: 1px solid hsla(0, 55%, 22%, 0.3);
+                                 color: hsl(0, 55%, 65%);">
                     删除索引
                   </button>
                 </div>
               </div>
 
-              <div v-if="isDev && expandedGraph[idx.storyId]" class="mt-3 pt-3 border-t border-gray-800/60">
+              <div v-if="isDev && expandedGraph[idx.storyId]" class="mt-3 pt-3" style="border-top: 1px solid hsla(220, 14%, 16%, 0.5);">
                 <div class="flex items-center justify-between gap-3 mb-3">
                   <button
                     type="button"
@@ -278,13 +295,16 @@ async function handleTestGraphRagExtract(storyId: string) {
                   >
                     {{ graphRagTestStatus[idx.storyId] === 'loading' ? '测试中...' : '测试 GraphRAG 抽取（前6chunks）' }}
                   </button>
-                  <span v-if="graphRagTestStatus[idx.storyId] === 'ok'" class="text-xs text-cthulhu-200">✓ 测试完成</span>
-                  <span v-if="graphRagTestStatus[idx.storyId] === 'error'" class="text-xs text-blood-300">✕ {{ graphRagTestError[idx.storyId] }}</span>
+                  <span v-if="graphRagTestStatus[idx.storyId] === 'ok'" class="text-xs" style="color: hsl(165, 50%, 60%);">✓ 测试完成</span>
+                  <span v-if="graphRagTestStatus[idx.storyId] === 'error'" class="text-xs" style="color: hsl(0, 55%, 65%);">✕ {{ graphRagTestError[idx.storyId] }}</span>
                 </div>
 
                 <pre
                   v-if="graphRagTestPreviewText[idx.storyId]"
-                  class="text-xs text-gray-300 bg-gray-950/40 border border-gray-800 rounded p-2 max-h-56 overflow-auto whitespace-pre-wrap font-mono"
+                  class="text-xs rounded p-2 max-h-56 overflow-auto whitespace-pre-wrap font-mono"
+                  style="color: hsl(38, 25%, 55%);
+                         background: hsla(220, 20%, 4%, 0.5);
+                         border: 1px solid hsl(220, 14%, 16%);"
                 >{{ graphRagTestPreviewText[idx.storyId] }}</pre>
 
                 <GraphBrowser
@@ -295,11 +315,12 @@ async function handleTestGraphRagExtract(storyId: string) {
             </div>
           </div>
 
-          <div v-else class="text-sm text-gray-600 py-4 text-center italic font-serif">
+          <div v-else class="text-sm py-4 text-center italic font-serif" style="color: hsl(220, 10%, 40%);">
             暂无已索引的故事
           </div>
         </section>
       </template>
     </div>
   </div>
+</div>
 </template>

@@ -28,7 +28,7 @@ describe('electron/rag/embedding', () => {
 
   it('createBuiltinEmbedder returns null if transformers pipeline unavailable', async () => {
     // Ensure dynamic import fails
-    vi.doMock('@xenova/transformers', () => {
+    vi.doMock('@huggingface/transformers', () => {
       throw new Error('nope')
     })
     const { createBuiltinEmbedder } = await import('../embedding.mjs')
@@ -40,7 +40,7 @@ describe('electron/rag/embedding', () => {
     const pipeline = vi.fn()
     const extractor = vi.fn().mockResolvedValue({ data: Float32Array.from([1, 2, 3]) })
     pipeline.mockResolvedValue(extractor)
-    vi.doMock('@xenova/transformers', () => ({ pipeline }))
+    vi.doMock('@huggingface/transformers', () => ({ pipeline }))
 
     const { createBuiltinEmbedder } = await import('../embedding.mjs')
     const emb1 = await createBuiltinEmbedder()

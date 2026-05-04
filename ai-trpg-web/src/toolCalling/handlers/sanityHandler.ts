@@ -38,10 +38,33 @@ function handleSanCheck(args: Record<string, unknown>, ctx: ToolHandlerContext):
       timestamp: Date.now(),
       role: 'system',
       type: 'dice',
-      content: `SAN检定 d100: ${roll} / 目标≤${currentSan} → ${statusText}，损失 ${sanLost} SAN`,
+      content: `SAN检定 d100: ${roll} / 目标≤${currentSan} → ${statusText}`,
       result: { roll, target: currentSan },
     },
   ]
+  
+  if (isFumble && /[dD]/.test(failureLossExpr)) {
+    displayMessages.push({
+      id: ctx.generateId(),
+      timestamp: Date.now(),
+      role: 'system',
+      type: 'dice',
+      content: `大失败惩罚 (最大化 ${failureLossExpr}): ${sanLost}`,
+      result: { roll: sanLost },
+    })
+  } else if (!isFumble && /[dD]/.test(lossExpr)) {
+    displayMessages.push({
+      id: ctx.generateId(),
+      timestamp: Date.now(),
+      role: 'system',
+      type: 'dice',
+      content: `SAN损失检定 ${lossExpr}: ${sanLost}`,
+      result: { roll: sanLost },
+    })
+  } else if (sanLost > 0 && !/[dD]/.test(lossExpr)) {
+    // For flat numbers, we can just optionally show a text message, but SAN -x handles it
+  }
+
   if (sanLost > 0) {
     displayMessages.push({
       id: ctx.generateId(),

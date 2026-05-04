@@ -8,67 +8,210 @@
   }
 
   body {
-    @apply m-0 min-h-screen bg-gray-950 text-gray-100 font-body antialiased;
+    @apply m-0 min-h-screen font-body antialiased;
+    background-color: hsl(220, 20%, 4%);
+    color: hsl(38, 40%, 78%);
+    /* Noise texture for aged-paper feel */
+    background-image: url("data:image/svg+xml,%3Csvg viewBox='0 0 256 256' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='4' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)' opacity='0.03'/%3E%3C/svg%3E");
   }
 
   #app {
     @apply w-full min-h-screen;
   }
 
+  /* Atmospheric scrollbar */
   ::-webkit-scrollbar {
     width: 6px;
   }
   ::-webkit-scrollbar-track {
-    @apply bg-gray-900;
+    background: hsl(220, 18%, 7%);
   }
   ::-webkit-scrollbar-thumb {
-    @apply bg-gray-700 rounded-full;
+    background: hsl(220, 14%, 16%);
+    border-radius: 3px;
   }
   ::-webkit-scrollbar-thumb:hover {
-    @apply bg-gray-600;
+    background: hsl(220, 10%, 30%);
+  }
+
+  /* Selection color */
+  ::selection {
+    background: hsla(165, 60%, 35%, 0.3);
+    color: hsl(38, 50%, 88%);
   }
 }
 
 @layer components {
+  /* ═══════════════════════════════════════════
+     Cards — ink-bleed borders, subtle inner glow
+     ═══════════════════════════════════════════ */
   .gothic-card {
-    @apply bg-gray-900/80 border border-gray-800 rounded-lg backdrop-blur-sm;
+    @apply rounded-lg backdrop-blur-[2px];
+    background: hsla(220, 16%, 11%, 0.88);
+    border: 1px solid hsl(220, 14%, 16%);
+    box-shadow:
+      0 1px 3px hsla(220, 20%, 4%, 0.6),
+      0 0 0 1px hsla(220, 14%, 16%, 0.3);
+    /* Remove expensive inset shadow/glow by default */
+  }
+  .gothic-card:hover {
+    border-color: hsla(220, 14%, 22%, 0.8);
+    background: hsla(220, 16%, 12%, 0.92);
   }
 
+  /* ═══════════════════════════════════════════
+     Buttons — eldritch glow primary
+     ═══════════════════════════════════════════ */
   .gothic-btn {
-    @apply px-4 py-2 rounded-lg font-medium transition-all duration-200
-           bg-eldritch-700 text-gray-100 border border-eldritch-600
-           hover:bg-eldritch-600 hover:shadow-eldritch
-           disabled:opacity-40 disabled:cursor-not-allowed disabled:hover:shadow-none;
+    @apply px-4 py-2 rounded-lg font-medium transition-all duration-200;
+    background: hsla(165, 45%, 22%, 0.7);
+    color: hsl(165, 50%, 78%);
+    border: 1px solid hsla(165, 55%, 28%, 0.6);
+  }
+  .gothic-btn:hover:not(:disabled) {
+    background: hsla(165, 50%, 25%, 0.85);
+    border-color: hsl(165, 60%, 35%);
+  }
+  .gothic-btn:disabled {
+    @apply opacity-40 cursor-not-allowed;
   }
 
   .gothic-btn-danger {
-    @apply px-4 py-2 rounded-lg font-medium transition-all duration-200
-           bg-blood-700 text-gray-100 border border-blood-600
-           hover:bg-blood-600 hover:shadow-blood
-           disabled:opacity-40 disabled:cursor-not-allowed;
+    @apply px-4 py-2 rounded-lg font-medium transition-all duration-200;
+    background: hsla(0, 55%, 22%, 0.7);
+    color: hsl(0, 55%, 82%);
+    border: 1px solid hsla(0, 60%, 28%, 0.6);
+  }
+  .gothic-btn-danger:hover:not(:disabled) {
+    background: hsla(0, 60%, 25%, 0.85);
+    border-color: hsl(0, 65%, 35%);
+  }
+  .gothic-btn-danger:disabled {
+    @apply opacity-40 cursor-not-allowed;
   }
 
   .gothic-btn-secondary {
-    @apply px-4 py-2 rounded-lg font-medium transition-all duration-200
-           bg-gray-800 text-gray-300 border border-gray-700
-           hover:bg-gray-700 hover:text-gray-100
-           disabled:opacity-40 disabled:cursor-not-allowed;
+    @apply px-4 py-2 rounded-lg font-medium transition-all duration-200;
+    background: hsla(220, 16%, 11%, 0.75);
+    color: hsl(38, 25%, 55%);
+    border: 1px solid hsl(220, 14%, 16%);
+  }
+  .gothic-btn-secondary:hover:not(:disabled) {
+    background: hsla(220, 16%, 14%, 0.9);
+    color: hsl(38, 40%, 78%);
+    border-color: hsl(220, 12%, 22%);
+  }
+  .gothic-btn-secondary:disabled {
+    @apply opacity-40 cursor-not-allowed;
   }
 
+  /* ═══════════════════════════════════════════
+     Inputs — parchment-tinted focus
+     ═══════════════════════════════════════════ */
   .gothic-input {
-    @apply w-full px-3 py-2 rounded-lg
-           bg-gray-900 text-gray-100 border border-gray-700
-           focus:outline-none focus:ring-2 focus:ring-eldritch-600 focus:border-transparent
-           placeholder-gray-500;
+    @apply w-full px-3 py-2 rounded-lg transition-all duration-200;
+    background: hsla(220, 18%, 7%, 0.85);
+    color: hsl(38, 40%, 78%);
+    border: 1px solid hsl(220, 14%, 16%);
+  }
+  .gothic-input::placeholder {
+    color: hsl(220, 10%, 30%);
+  }
+  .gothic-input:focus {
+    @apply outline-none;
+    border-color: hsla(165, 55%, 28%, 0.6);
   }
 
   .gothic-select {
-    @apply w-full px-3 py-2 rounded-lg appearance-none
-           bg-gray-900 text-gray-100 border border-gray-700
-           focus:outline-none focus:ring-2 focus:ring-eldritch-600 focus:border-transparent;
+    @apply w-full px-3 py-2 rounded-lg appearance-none transition-all duration-200;
+    background: hsla(220, 18%, 7%, 0.85);
+    color: hsl(38, 40%, 78%);
+    border: 1px solid hsl(220, 14%, 16%);
+    background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 24 24' fill='none' stroke='%23666' stroke-width='2'%3E%3Cpath d='M6 9l6 6 6-6'/%3E%3C/svg%3E");
+    background-repeat: no-repeat;
+    background-position: right 0.75rem center;
+    padding-right: 2.5rem;
+  }
+  .gothic-select:focus {
+    @apply outline-none;
+    border-color: hsla(165, 55%, 28%, 0.6);
   }
 
+  /* ═══════════════════════════════════════════
+     Typography — heading classes
+     ═══════════════════════════════════════════ */
   .gothic-heading {
-    @apply font-serif text-parchment-200 tracking-wide;
+    @apply font-display tracking-wider;
+    color: hsl(38, 50%, 88%);
+  }
+
+  .gothic-body {
+    @apply font-serif;
+    color: hsl(38, 40%, 78%);
+  }
+
+  /* ═══════════════════════════════════════════
+     Decorative utilities
+     ═══════════════════════════════════════════ */
+  .eldritch-glow {
+    /* Simplified shadow */
+    box-shadow: 0 0 10px hsla(165, 60%, 35%, 0.2);
+  }
+
+  .ritual-border {
+    border-image: linear-gradient(
+      to right,
+      transparent,
+      hsla(42, 70%, 50%, 0.4),
+      hsla(42, 70%, 50%, 0.1),
+      transparent
+    ) 1;
+  }
+
+  .vignette-overlay {
+    position: relative;
+    /* Use will-change for potential scrolls in this area */
+    will-change: transform;
+  }
+  /* Simplified vignette overlay - remove Pseudo-element if not necessary or simplify */
+  .vignette-overlay::before {
+    content: '';
+    position: absolute;
+    inset: 0;
+    background: radial-gradient(
+      ellipse at center,
+      transparent 70%,
+      hsla(220, 20%, 4%, 0.4) 100%
+    );
+    pointer-events: none;
+    z-index: 1;
+  }
+
+  .ink-divider {
+    height: 1px;
+    background: linear-gradient(
+      to right,
+      transparent,
+      hsl(220, 14%, 16%),
+      hsla(165, 60%, 35%, 0.2),
+      hsl(220, 14%, 16%),
+      transparent
+    );
+  }
+
+  /* ═══════════════════════════════════════════
+     Sigil loading spinner
+     ═══════════════════════════════════════════ */
+  .sigil-spinner {
+    @apply inline-block w-6 h-6 animate-sigil-spin;
+    border: 2px solid hsla(165, 60%, 35%, 0.2);
+    border-top-color: hsl(165, 60%, 35%);
+    border-radius: 50%;
+    will-change: transform;
+  }
+
+  /* Animation Performance Optimizations */
+  .animate-breathe, .animate-sigil-spin, .animate-pulse-slow, .animate-flicker {
+    will-change: transform, opacity;
   }
 }

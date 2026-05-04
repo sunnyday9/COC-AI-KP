@@ -25,36 +25,52 @@ export async function parseDocx(buffer) {
 
 /**
  * Parse EPUB buffer to plain text (chapter contents concatenated).
+ * Uses epub2 which provides a clean Promise-based API.
  */
 export async function parseEpub(buffer) {
-  const mod = await import('epub-parser')
-  const epubParser = mod.default || mod
-  return new Promise((resolve, reject) => {
-    epubParser.open(buffer, (err, epubData) => {
-      if (err) return reject(err)
+  const { createTempFile } = await getTempFileHelper()
+  const tmpPath = await createTempFile(buffer, '.epub')
+  try {
+    const EPub = (await import('epub2')).default || (await import('epub2')).EPub
+    const epub = await EPub.createAsync(tmpPath)
+    const flow = epub.flow || []
+    const texts = []
+    for (const chapter of flow) {
+      if (!chapter.id) continue
       try {
-        const opsRoot = epubData?.paths?.opsRoot || ''
-        const linearSpine = epubData?.easy?.linearSpine || {}
-        const texts = []
-        for (const id of Object.keys(linearSpine)) {
-          const item = linearSpine[id]?.item
-          const href = item?.$?.href
-          if (href) {
-            const filePath = (opsRoot + href).replace(/\/\/+/g, '/')
-            try {
-              const html = epubParser.extractText(filePath)
-              if (html) texts.push(stripHtml(html))
-            } catch {
-              // Skip unreadable items
-            }
-          }
-        }
-        resolve(texts.join('\n\n'))
-      } catch (e) {
-        reject(e)
+        const html = await new Promise((resolve, reject) => {
+          epub.getChapter(chapter.id, (err, data) => {
+            if (err) reject(err)
+            else resolve(data)
+          })
+        })
+        if (html) texts.push(stripHtml(html))
+      } catch {
+        // Skip unreadable chapters
       }
-    })
-  })
+    }
+    return texts.join('\n\n')
+  } finally {
+    try { const { unlink } = await import('node:fs/promises'); await unlink(tmpPath) } catch {}
+  }
+}
+
+/**
+ * Helper to write buffer to a temp file (epub2 requires a file path).
+ */
+async function getTempFileHelper() {
+  const { writeFile } = await import('node:fs/promises')
+  const { tmpdir } = await import('node:os')
+  const { join } = await import('node:path')
+  const { randomBytes } = await import('node:crypto')
+  return {
+    createTempFile: async (buffer, ext) => {
+      const name = `coc_epub_${randomBytes(8).toString('hex')}${ext}`
+      const p = join(tmpdir(), name)
+      await writeFile(p, buffer)
+      return p
+    },
+  }
 }
 
 /**

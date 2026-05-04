@@ -2,7 +2,12 @@ const { ipcMain, app, dialog } = require('electron')
 const fs = require('fs').promises
 const path = require('path')
 const { pathToFileURL } = require('url')
-const pdfParse = require('pdf-parse')
+const { PDFParse } = require('pdf-parse')
+async function pdfParse(dataBuffer) {
+  const uint8Array = new Uint8Array(dataBuffer.buffer, dataBuffer.byteOffset, dataBuffer.byteLength);
+  const parser = new PDFParse(uint8Array);
+  return await parser.getText();
+}
 const { assertRealPathInDir, assertParentRealPathInDir } = require('./pathSafety.cjs')
 
 // 将剧本统一存放到项目根目录的 scripts 目录（ai-trpg-web/scripts）
